@@ -45,8 +45,11 @@ export async function start() {
 		return;
 	}
 	client.connect();
-	await Promise.all([loadServices(), loadScreens(), loadPacks()]);
-	ensurePack(app.me?.pack);
+	// The profile's pack first: widgets then appear directly in it, instead of
+	// Standard ones swapped a moment later. ensurePack never throws (fallback).
+	await loadPacks();
+	await ensurePack(app.me?.pack);
+	await Promise.all([loadServices(), loadScreens()]);
 }
 
 export async function loadScreens() {

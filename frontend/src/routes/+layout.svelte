@@ -230,6 +230,10 @@
 		}
 		nav a {
 			justify-content: flex-start;
+			/* Long screen titles wrap in the rail (no sideways scrolling). */
+			white-space: normal;
+			overflow-wrap: anywhere;
+			padding-block: 0.5rem;
 		}
 	}
 
