@@ -1,0 +1,24 @@
+port: 8090 # HTTP port of the UI and its API
+location: Europe/Paris # required by eria-core (timezone)
+# Things never shown to the user (glob on TD id): apps, agents, orchestrator
+hide:
+  - "urn:eria:app:controler:*"
+  - "urn:eria:agent:*"
+  - "urn:eria:manager:1"
+# Contexts of manager-contexts shown as modes (other active ones are shown too, by id)
+modes:
+  - id: away
+    label: Absent
+  - id: guests
+    label: Invités
+  - id: canicule
+    label: Canicule
+  - id: holiday
+    label: Vacances
+
+# SQLite file for profiles, sessions and screens (env UI_USER_DATABASE overrides it)
+database: ui-user.db
+# First admin's PIN, used only while there is no profile (or env UI_USER_ADMIN_PIN)
+# adminPin: "<4 to 8 digits>"
+# Widget packs folder (PACKS.md; env UI_USER_PACKS overrides it)
+packs: packs

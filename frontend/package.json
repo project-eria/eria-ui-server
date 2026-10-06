@@ -1,0 +1,35 @@
+{
+  "name": "eria-ui-user",
+  "version": "0.1.0",
+  "private": true,
+  "description": "User dashboard to control ERIA Web of Things services",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build && vite build -c vite.sdk.config.ts",
+    "preview": "vite preview",
+    "check": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide && vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "@inlang/paraglide-js": "^2.25.4",
+    "@sveltejs/adapter-static": "^4.0.0",
+    "@sveltejs/kit": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^24.19.1",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
+  "packageManager": "pnpm@11.20.0"
+}

@@ -1,0 +1,16 @@
+# Frontend
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/src/lib/paraglide/
+frontend/project.inlang/cache/
+# SvelteKit build embedded by the backend: built by CI, never committed
+backend/web/*
+!backend/web/.gitkeep
+# Backend local files
+backend/ui-user
+backend/config.yml
+backend/dev.env
+backend/*.db
+backend/*.db-*
+dist/
+.DS_Store

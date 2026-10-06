@@ -1,0 +1,53 @@
+# Release on a vX.Y.Z tag: tests, then GoReleaser (binaries + eria-app.yml +
+# checksums.txt), picked up by the orchestrator's catalog (DESIGN §12).
+# Own workflow: the shared one expects a Go module at the root and no frontend.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # An ERIA app release must carry its description (DESIGN §12.3)
+      - name: Check eria-app.yml
+        run: |
+          name=$(sed -n 's/^name:[[:space:]]*//p' eria-app.yml | tr -d "\"' ")
+          [ "$name" = "${{ github.event.repository.name }}" ] || { echo "::error::eria-app.yml name '$name' != repository"; exit 1; }
+
+      - name: Test frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm check && pnpm test
+
+      - name: Test backend
+        working-directory: backend
+        run: pnpm --dir ../frontend build && go test ./...
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
