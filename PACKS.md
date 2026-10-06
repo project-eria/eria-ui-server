@@ -21,8 +21,12 @@ dark), through the CSS variables below. Test your pack in all four.
   person** (it can drive devices). Only install packs you trust; only people
   with access to the server can install one.
 
-Example: [`packs-examples/contour/`](packs-examples/contour/) — lights only;
-every other capability falls back to Standard.
+Examples:
+- [`packs-examples/contour/`](packs-examples/contour/) — lights only; every other
+  capability falls back to Standard. Minimal starting point.
+- [`packs-examples/pastille/`](packs-examples/pastille/) — every capability, in the
+  spirit of the Mushroom cards for Home Assistant (written from scratch): round
+  tinted icons, level bars, icon buttons, modes as chips; with its `REPORT.md`.
 
 ## `pack.json`
 

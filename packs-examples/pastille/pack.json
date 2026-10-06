@@ -1,0 +1,26 @@
+{
+	"id": "pastille",
+	"name": "Pastille",
+	"version": "0.1.0",
+	"sdk": 1,
+	"entry": "index.js",
+	"report": "REPORT.md",
+	"widgets": {
+		"LightBasic": { "tag": "pastille-light", "sizes": { "tile": [[2, 1], [1, 1]], "value": [[2, 1]] } },
+		"LightDimmer": { "tag": "pastille-light", "sizes": { "full": [[4, 2], [2, 2]], "tile": [[2, 1], [1, 1]], "value": [[2, 1]] } },
+		"ShutterBasic": { "tag": "pastille-cover", "sizes": { "full": [[2, 2], [4, 2]], "value": [[2, 1]] } },
+		"ShutterPosition": { "tag": "pastille-cover", "sizes": { "full": [[4, 2], [2, 3]], "tile": [[2, 2]], "value": [[2, 1]] } },
+		"GarageDoor": { "tag": "pastille-garage", "sizes": { "full": [[2, 2], [4, 2]], "value": [[2, 1]] } },
+		"Trigger": { "tag": "pastille-trigger", "sizes": { "value": [[2, 1], [1, 1]] } },
+		"TemperatureSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"HygrometerSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"BarometerSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"WindgaugeSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1]], "full": [[4, 1]] } },
+		"WaterMeter": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1]], "full": [[4, 1]] } },
+		"UVSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"VoltageSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"PHSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"ORPSensor": { "tag": "pastille-sensor", "sizes": { "value": [[2, 1], [1, 1]], "full": [[4, 1]] } },
+		"Contexts": { "tag": "pastille-modes", "sizes": { "full": [[4, 1]] } }
+	}
+}
