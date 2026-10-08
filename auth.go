@@ -117,7 +117,7 @@ func (a *Auth) Bootstrap(pin string) error {
 		return err
 	}
 	if pin == "" {
-		return errors.New("no profile yet: set UI_USER_ADMIN_PIN to create the first admin")
+		return errors.New("no profile yet: set ERIA_UI_SERVER_ADMIN_PIN to create the first admin")
 	}
 	_, err := a.CreateProfile("Admin", RoleAdmin, pin)
 	if err == nil {

@@ -1,7 +1,7 @@
 # ERIA package description (orchestrator catalog, eria-manager DESIGN §12.3)
-name: ui-user
-title: Interface maison
-description: Tableau de bord pour piloter les services (lumières, volets, modes…), avec profils et écrans personnalisés
+name: eria-ui-server
+title: Serveur de l'application ERIA
+description: Relais entre l'application ERIA et les services (lumières, volets, modes…) ; profils, écrans personnalisés, packs de widgets
 kind: service
 requires: []
 
@@ -9,8 +9,8 @@ exec:
   args: ["--config-path", "{config}"]
   # Profiles, sessions and screens: kept in the agent's data folder across reinstalls.
   # Stateful app: pin it to one node when deploying.
-  # Widget packs (PACKS.md): drop folders in {data}/packs on the node, no release needed.
-  env: ["UI_USER_DATABASE={data}/ui-user.db", "UI_USER_PACKS={data}/packs"]
+  # Widget packs (PACKS.md in eria-ui-app): drop folders in {data}/packs on the node, no release needed.
+  env: ["ERIA_UI_SERVER_DATABASE={data}/eria-ui-server.db", "ERIA_UI_SERVER_PACKS={data}/packs"]
   health: { url: "http://127.0.0.1:{port}/api/health", grace: 20s, interval: 10s }
 
 config: |

@@ -1,18 +1,16 @@
-// ui-user backend: discovers the WoT Things of the LAN and exposes them to
-// the user dashboard as services, through a single HTTP entry point.
+// eria-ui-server: relay between the ERIA app (eria-ui-app) and the WoT Things of
+// the LAN. Discovers the Things, exposes them as services, relays commands and
+// observations, and keeps the accounts and screens.
 package main
 
 import (
 	"bytes"
 	"context"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
-	"strings"
 
 	eria "github.com/project-eria/eria-core"
 	zlog "github.com/rs/zerolog/log"
@@ -27,11 +25,11 @@ type Mode struct {
 var config = struct {
 	Host     string `yaml:"host,omitempty"`
 	Port     uint   `yaml:"port" default:"8090"`
-	Database string `yaml:"database" default:"ui-user.db"` // SQLite file: profiles, sessions, screens
+	Database string `yaml:"database" default:"eria-ui-server.db"` // SQLite file: profiles, sessions, screens
 	// First admin's PIN, used only while there is no profile. The orchestrator's
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
-	// Widget packs folder (env UI_USER_PACKS overrides it), see PACKS.md.
+	// Widget packs folder (env ERIA_UI_SERVER_PACKS overrides it), see PACKS.md.
 	Packs string   `yaml:"packs" default:"packs"`
 	Hide  []string `yaml:"hide,omitempty"`  // glob patterns on TD ids, see config.sample.yml
 	Modes []Mode   `yaml:"modes,omitempty"` // contexts offered as modes, in display order
@@ -40,17 +38,12 @@ var config = struct {
 // maxBody bounds the JSON values a browser may send to a Thing.
 const maxBody = 64 << 10
 
-// web is the SvelteKit build (`pnpm build` in ../frontend writes it here).
-//
-//go:embed all:web
-var web embed.FS
-
 func main() {
-	eria.Init("ERIA UI user", &config)
+	eria.Init("ERIA UI server", &config)
 	defer eria.Close()
 
-	// The orchestrator's agent gives the app a data folder: UI_USER_DATABASE={data}/ui-user.db
-	if path := os.Getenv("UI_USER_DATABASE"); path != "" {
+	// The orchestrator's agent gives the app a data folder: ERIA_UI_SERVER_DATABASE={data}/eria-ui-server.db
+	if path := os.Getenv("ERIA_UI_SERVER_DATABASE"); path != "" {
 		config.Database = path
 	}
 	auth, err := OpenAuth(config.Database)
@@ -58,12 +51,12 @@ func main() {
 		zlog.Fatal().Err(err).Str("file", config.Database).Msg("[main] Can't open the database")
 	}
 	// First admin's PIN: environment (manual install) or deployment config (orchestrator).
-	pin := os.Getenv("UI_USER_ADMIN_PIN")
+	pin := os.Getenv("ERIA_UI_SERVER_ADMIN_PIN")
 	if pin == "" {
 		pin = config.AdminPin
 	}
 	auth.PacksDir = config.Packs
-	if dir := os.Getenv("UI_USER_PACKS"); dir != "" {
+	if dir := os.Getenv("ERIA_UI_SERVER_PACKS"); dir != "" {
 		auth.PacksDir = dir
 	}
 	if err := auth.Bootstrap(pin); err != nil {
@@ -158,26 +151,7 @@ func newMux(registry *Registry, hub *Hub) *http.ServeMux {
 		}
 	})
 
-	static, _ := fs.Sub(web, "web")
-	mux.Handle("/", spa(static))
-
 	return mux
-}
-
-// spa serves the built files, and index.html for client-side routes.
-func spa(files fs.FS) http.Handler {
-	fileServer := http.FileServerFS(files)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/")
-		if _, err := fs.Stat(files, name); name != "" && err != nil {
-			http.ServeFileFS(w, r, files, "index.html")
-			return
-		}
-		if strings.HasPrefix(name, "_app/immutable/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		fileServer.ServeHTTP(w, r)
-	})
 }
 
 func lookupProperty(w http.ResponseWriter, r *http.Request, registry *Registry) (TD, Property, bool) {

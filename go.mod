@@ -1,4 +1,4 @@
-module github.com/project-eria/ui-user
+module github.com/project-eria/eria-ui-server
 
 go 1.26.0
 

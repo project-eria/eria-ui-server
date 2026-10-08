@@ -1,8 +1,0 @@
-{
-	"extends": "$app/tsconfig",
-	"include": ["src", "*"],
-	"compilerOptions": {
-		"strict": true,
-		"useDefineForClassFields": false
-	}
-}

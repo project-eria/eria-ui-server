@@ -74,7 +74,7 @@ func validatePack(dir, name string, p Pack) string {
 	case p.ID != name || !packID.MatchString(p.ID) || p.ID == "standard":
 		return fmt.Sprintf("id %q must equal the folder name, in lowercase letters, digits and dashes, and not be \"standard\"", p.ID)
 	case p.SDK != sdkVersion:
-		return fmt.Sprintf("needs SDK version %d, this ui-user provides %d", p.SDK, sdkVersion)
+		return fmt.Sprintf("needs SDK version %d, this server provides %d", p.SDK, sdkVersion)
 	case strings.TrimSpace(p.Name) == "" || len(p.Widgets) == 0:
 		return "name and at least one widget are required"
 	case !fileIn(dir, name, p.Entry):
