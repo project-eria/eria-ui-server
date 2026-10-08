@@ -16,8 +16,9 @@ import (
 	zlog "github.com/rs/zerolog/log"
 )
 
-// Mode is a context of manager-contexts that users switch on and off.
-type Mode struct {
+// Context is a context of manager-contexts (a state of the house: away,
+// guests…) that people switch on and off.
+type Context struct {
 	ID    string `yaml:"id" json:"id"`
 	Label string `yaml:"label" json:"label"`
 }
@@ -30,9 +31,9 @@ var config = struct {
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
 	// Widget packs folder (env ERIA_UI_SERVER_PACKS overrides it), see PACKS.md.
-	Packs string   `yaml:"packs" default:"packs"`
-	Hide  []string `yaml:"hide,omitempty"`  // glob patterns on TD ids, see config.sample.yml
-	Modes []Mode   `yaml:"modes,omitempty"` // contexts offered as modes, in display order
+	Packs    string    `yaml:"packs" default:"packs"`
+	Hide     []string  `yaml:"hide,omitempty"`     // glob patterns on TD ids, see config.sample.yml
+	Contexts []Context `yaml:"contexts,omitempty"` // contexts offered to people, in display order
 }{}
 
 // maxBody bounds the JSON values a browser may send to a Thing.
@@ -111,8 +112,8 @@ func newMux(registry *Registry, hub *Hub) *http.ServeMux {
 		writeJSON(w, registry.Services())
 	})
 
-	mux.HandleFunc("GET /api/modes", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, append([]Mode{}, config.Modes...)) // never null
+	mux.HandleFunc("GET /api/contexts", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, append([]Context{}, config.Contexts...)) // never null
 	})
 
 	// Property and action names may contain "/" (e.g. astral "today/sunrise").

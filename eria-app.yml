@@ -1,7 +1,7 @@
 # ERIA package description (orchestrator catalog, eria-manager DESIGN §12.3)
 name: eria-ui-server
 title: Serveur de l'application ERIA
-description: Relais entre l'application ERIA et les services (lumières, volets, modes…) ; profils, écrans personnalisés, packs de widgets
+description: Relais entre l'application ERIA et les services (lumières, volets, contextes…) ; profils, écrans personnalisés, packs de widgets
 kind: service
 requires: []
 
@@ -24,8 +24,8 @@ config: |
     - "urn:eria:app:controler:*"
     - "urn:eria:agent:*"
     - "urn:eria:manager:1"
-  # Contexts of manager-contexts shown as modes
-  modes:
+  # Contexts of manager-contexts offered to people
+  contexts:
     - id: away
       label: Absent
     - id: guests

@@ -5,8 +5,8 @@ hide:
   - "urn:eria:app:controler:*"
   - "urn:eria:agent:*"
   - "urn:eria:manager:1"
-# Contexts of manager-contexts shown as modes (other active ones are shown too, by id)
-modes:
+# Contexts of manager-contexts offered to people (other active ones are shown too, by id)
+contexts:
   - id: away
     label: Absent
   - id: guests

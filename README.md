@@ -1,7 +1,7 @@
 # eria-ui-server
 
 Relay between the ERIA app ([eria-ui-app](https://github.com/project-eria/eria-ui-app)) and
-the services of the house (lights, shutters, modes…): mDNS discovery of the WoT Things,
+the services of the house (lights, shutters, contexts…): mDNS discovery of the WoT Things,
 `/api/*`, one WebSocket multiplexing the observations, profiles + PIN, custom screens, widget
 packs (`packs/<id>/`, contract in eria-ui-app's `PACKS.md`). Design and plan: eria-ui-app's `PLAN.md` (§2.1).
 
