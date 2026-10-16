@@ -463,3 +463,9 @@ func invalid(err error) *opError {
 	}
 	return fail(failInvalid, err.Error())
 }
+
+// bearer returns the session token sent by the app (Authorization header).
+func bearer(r *http.Request) string {
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return token
+}

@@ -28,8 +28,6 @@ var config = struct {
 	// First admin's PIN, used only while there is no profile. The orchestrator's
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
-	// Widget packs folder (env ERIA_UI_SERVER_PACKS overrides it), see PACKS.md.
-	Packs string `yaml:"packs" default:"packs"`
 	// First values only, copied to the database at the first start; then
 	// edited by the admin (PLAN §10).
 	Hide     []string  `yaml:"hide,omitempty"`     // glob patterns on TD ids, see config.sample.yml
@@ -56,10 +54,6 @@ func main() {
 	if pin == "" {
 		pin = config.AdminPin
 	}
-	auth.PacksDir = config.Packs
-	if dir := os.Getenv("ERIA_UI_SERVER_PACKS"); dir != "" {
-		auth.PacksDir = dir
-	}
 	if err := auth.Bootstrap(pin); err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Can't create the first profile")
 	}
@@ -85,7 +79,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: withAuth(newMux(&Channel{hub: hub, auth: auth, registry: registry}), auth),
+		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry}),
 	}
 	go func() {
 		zlog.Info().Str("addr", server.Addr).Msg("[main] Listening")
@@ -97,12 +91,6 @@ func main() {
 	eria.WaitForSignal()
 	stop()
 	server.Shutdown(context.Background())
-}
-
-func withAuth(mux *http.ServeMux, auth *Auth) http.Handler {
-	auth.Routes(mux)
-	PackRoutes(mux, auth.PacksDir)
-	return auth.Protect(mux)
 }
 
 func newMux(ch *Channel) *http.ServeMux {

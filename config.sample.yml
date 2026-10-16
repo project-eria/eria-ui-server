@@ -21,5 +21,3 @@ contexts:
 database: eria-ui-server.db
 # First admin's PIN, used only while there is no profile (or env ERIA_UI_SERVER_ADMIN_PIN)
 # adminPin: "<4 to 8 digits>"
-# Widget packs folder (PACKS.md; env ERIA_UI_SERVER_PACKS overrides it)
-packs: packs

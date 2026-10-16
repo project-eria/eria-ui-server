@@ -149,7 +149,7 @@ func TestChannel(t *testing.T) {
 	}
 	registry.things["urn:test"] = &thingEntry{seen: time.Now(), td: td}
 	hub := NewHub(registry)
-	srv := httptest.NewServer(withAuth(newMux(&Channel{hub: hub, auth: auth, registry: registry}), auth))
+	srv := httptest.NewServer(newMux(&Channel{hub: hub, auth: auth, registry: registry}))
 	defer srv.Close()
 
 	dial := func(secret, token string) *testApp {

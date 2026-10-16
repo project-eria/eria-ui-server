@@ -2,10 +2,7 @@ package main
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -49,36 +46,6 @@ func TestAuth(t *testing.T) {
 	now = now.Add(lockBase + time.Second)
 	mb := login(member.ID, "5678")
 
-	srv := httptest.NewServer(withAuth(http.NewServeMux(), auth))
-	defer srv.Close()
-	call := func(token, method, path, body string) int {
-		t.Helper()
-		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
-	}
-	expect := func(what string, got, want int) {
-		t.Helper()
-		if got != want {
-			t.Errorf("%s: status %d, want %d", what, got, want)
-		}
-	}
-
-	expect("health probe is public", call("", "GET", "/api/health", ""), 404) // reached: no route in this mux
-	expect("API needs a token", call("", "GET", "/api/me", ""), 401)
-	expect("unknown token", call("nope", "GET", "/api/me", ""), 401)
-	expect("member reads own profile", call(mb, "GET", "/api/me", ""), 200)
-	expect("Standard pack chosen", call(mb, "PUT", "/api/me", `{"pack":"standard"}`), 204)
-	expect("unknown theme refused", call(mb, "PUT", "/api/me", `{"theme":"neon"}`), 400)
-
 	// Profiles: unique names, valid PINs, the last admin stays; a new PIN
 	// signs the profile out everywhere.
 	a := login(1, "1234")
@@ -98,10 +65,16 @@ func TestAuth(t *testing.T) {
 	if err := auth.UpdateProfile(1, nil, &demote, nil); !errors.Is(err, errLastAdmin) {
 		t.Errorf("demote last admin: %v", err)
 	}
+	if p, ok := auth.Session(mb); !ok || p.Level != 1 {
+		t.Errorf("member session = %+v, %v", p, ok)
+	}
 	pin := "1357"
 	auth.UpdateProfile(member.ID, nil, nil, &pin)
-	expect("new PIN signs the member out", call(mb, "GET", "/api/me", ""), 401)
-
+	if _, ok := auth.Session(mb); ok {
+		t.Error("a new PIN must sign the member out")
+	}
 	auth.Logout(a)
-	expect("after logout", call(a, "GET", "/api/me", ""), 401)
+	if _, ok := auth.Session(a); ok {
+		t.Error("session still valid after logout")
+	}
 }

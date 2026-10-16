@@ -3,7 +3,7 @@
 Relay between the ERIA app ([eria-ui-app](https://github.com/project-eria/eria-ui-app)) and
 the services of the house (lights, shutters, contexts…): mDNS discovery of the WoT Things, one
 WebSocket per app for commands, observations, events and settings (below), profiles + PIN,
-terminals, pages, widget packs. Design and plan: eria-ui-app's `PLAN.md` (§2.1, §2.2).
+terminals, pages. Design and plan: eria-ui-app's `PLAN.md` (§2.1, §2.2).
 
 ## Channel (`/api/ws`)
 
@@ -32,6 +32,8 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
 | `observe` / `unobserve` | `thing`, `name` (property) | `true` |
 | `subscribe` / `unsubscribe` | `thing`, `name` (event) | `true` |
+| `adminProfiles` | — | profiles with their role (level 0) |
+| `createProfile` / `updateProfile` / `deleteProfile` | `value`: `{name, role, pin}` / `{id, name?, role?, pin?}` / id | profile / `true` (level 0) |
 | `terminals`, `hidden` | — | lists (level 0) |
 | `configureTerminal` | `value`: `{id, name?, type?, theme?, aspect?, pages?}` | terminal (level 0) |
 | `forgetTerminal` | `value`: id | `true` (level 0) |
@@ -52,8 +54,7 @@ an element is `{id, type, …, label?, hidden?, widget?, options?}` with `type` 
 follow their profile. `can` is provisional (reading for all, commands below level 9) until
 `authz` computes it.
 
-Profiles and preferences still use HTTP (`/api/profiles`, `/api/me`) with the same bearer
-token, until lot 17.
+Besides the channel, HTTP only serves the health probe (`/api/health`).
 
 ## Develop
 

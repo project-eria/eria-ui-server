@@ -1,18 +1,15 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -49,22 +46,16 @@ const (
 var pinFormat = regexp.MustCompile(`^[0-9]{4,8}$`)
 
 type Profile struct {
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	Role   string `json:"role,omitempty"`
-	Level  int    `json:"level"`
-	Pack   string `json:"pack,omitempty"`   // widget pack chosen by the profile, "" = Standard
-	Theme  string `json:"theme,omitempty"`  // theme, "" = Ardoise
-	Scheme string `json:"scheme,omitempty"` // auto | light | dark, "" = auto
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Role  string `json:"role,omitempty"`
+	Level int    `json:"level"`
 }
 
 type Auth struct {
-	db       *sql.DB
-	now      func() time.Time // overridable by tests
-	PacksDir string           // where widget packs are dropped (PLAN §5.2)
+	db  *sql.DB
+	now func() time.Time // overridable by tests
 }
-
-type ctxKey struct{}
 
 // OpenAuth opens (or creates) the SQLite database holding profiles and sessions.
 func OpenAuth(path string) (*Auth, error) {
@@ -90,30 +81,13 @@ func OpenAuth(path string) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Auth{db: db, now: time.Now, PacksDir: "packs"}
+	a := &Auth{db: db, now: time.Now}
 	for _, migrate := range []func() error{a.migratePages, a.migrateTerminals, a.migrateSettings} {
 		if err := migrate(); err != nil {
 			return nil, err
 		}
 	}
-	// Columns added after the first release: older databases get them here.
-	for _, c := range []struct{ table, column string }{
-		{"profiles", "pack"}, {"profiles", "theme"}, {"profiles", "scheme"},
-	} {
-		if err := a.addColumn(c.table, c.column, "TEXT NOT NULL DEFAULT ''"); err != nil {
-			return nil, err
-		}
-	}
 	return a, nil
-}
-
-func (a *Auth) addColumn(table, column, decl string) error {
-	var n int
-	if err := a.db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil || n > 0 {
-		return err
-	}
-	_, err := a.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl))
-	return err
 }
 
 // Bootstrap creates a first admin profile when there is none.
@@ -301,25 +275,14 @@ func tokenHash(token string) string {
 // Session returns the profile signed in with this token.
 func (a *Auth) Session(token string) (Profile, bool) {
 	var p Profile
-	err := a.db.QueryRow(`SELECT p.id, p.name, p.role, p.pack, p.theme, p.scheme FROM sessions s JOIN profiles p ON p.id = s.profile_id
-		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(token), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Role, &p.Pack, &p.Theme, &p.Scheme)
+	err := a.db.QueryRow(`SELECT p.id, p.name, p.role FROM sessions s JOIN profiles p ON p.id = s.profile_id
+		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(token), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Role)
 	p.Level = levels[p.Role]
 	return p, err == nil
 }
 
 func (a *Auth) Logout(token string) {
 	a.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash(token))
-}
-
-// bearer returns the session token sent by the app (Authorization header).
-func bearer(r *http.Request) string {
-	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return token
-}
-
-func profileFrom(ctx context.Context) Profile {
-	p, _ := ctx.Value(ctxKey{}).(Profile)
-	return p
 }
 
 var (
@@ -332,48 +295,3 @@ var (
 )
 
 // --- HTTP ---
-
-// Protect guards the remaining HTTP routes (/api, except the health probe):
-// a session token is required. The app
-// sends its token in the Authorization header: no cookie, hence no CSRF.
-func (a *Auth) Protect(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if !strings.HasPrefix(path, "/api/") || path == "/api/health" || path == "/api/ws" {
-			next.ServeHTTP(w, r) // the channel checks its own connections
-			return
-		}
-		p, ok := a.Session(bearer(r))
-		switch {
-		case !ok:
-			http.Error(w, "not signed in", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
-	})
-}
-
-func (a *Auth) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, profileFrom(r.Context()))
-	})
-
-	// Own preferences, for every role (guests included: it only changes the display).
-	mux.HandleFunc("PUT /api/me", func(w http.ResponseWriter, r *http.Request) {
-		// Only the fields sent are changed.
-		var in struct{ Pack, Theme, Scheme *string }
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in) != nil ||
-			(in.Pack != nil && !packExists(a.PacksDir, *in.Pack)) ||
-			(in.Theme != nil && !themes[*in.Theme]) || (in.Scheme != nil && !schemes[*in.Scheme]) {
-			http.Error(w, "unknown pack, theme or scheme", http.StatusBadRequest)
-			return
-		}
-		id := profileFrom(r.Context()).ID
-		for column, value := range map[string]*string{"pack": in.Pack, "theme": in.Theme, "scheme": in.Scheme} {
-			if value != nil {
-				a.db.Exec(`UPDATE profiles SET `+column+` = ? WHERE id = ?`, *value, id)
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-}
