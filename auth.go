@@ -92,16 +92,14 @@ func OpenAuth(path string) (*Auth, error) {
 		return nil, err
 	}
 	a := &Auth{db: db, now: time.Now, PacksDir: "packs"}
-	for _, migrate := range []func() error{a.migrateScreens, a.migrateTerminals, a.migrateSettings} {
+	for _, migrate := range []func() error{a.migratePages, a.migrateTerminals, a.migrateSettings} {
 		if err := migrate(); err != nil {
 			return nil, err
 		}
 	}
 	// Columns added after the first release: older databases get them here.
 	for _, c := range []struct{ table, column string }{
-		{"profiles", "pack"}, {"screens", "pack"},
-		{"profiles", "theme"}, {"screens", "theme"},
-		{"profiles", "scheme"}, {"screens", "scheme"},
+		{"profiles", "pack"}, {"profiles", "theme"}, {"profiles", "scheme"},
 	} {
 		if err := a.addColumn(c.table, c.column, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return nil, err

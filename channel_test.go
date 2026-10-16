@@ -278,6 +278,48 @@ func TestChannel(t *testing.T) {
 		t.Errorf("contexts = %v", r)
 	}
 
+	// Pages: a saved page is pushed to the terminal it is assigned to.
+	hasPage := func(version float64) func(map[string]any) bool {
+		return func(m map[string]any) bool {
+			pages, _ := m["pages"].([]any)
+			if m["push"] != "resources" || len(pages) != 1 {
+				return false
+			}
+			ref, _ := pages[0].(map[string]any)
+			return ref["version"] == version
+		}
+	}
+	page := map[string]any{"title": "Entrée", "shared": true, "elements": []map[string]any{
+		{"id": "e1", "type": "action", "thing": "urn:test", "name": "toggle"}}}
+	r = a.call("savePage", map[string]any{"value": page})
+	saved, _ := r["result"].(map[string]any)
+	if saved["id"] == nil {
+		t.Fatalf("savePage = %v", r)
+	}
+	a.call("configureTerminal", map[string]any{"value": map[string]any{"id": id2, "pages": []any{saved["id"]}}})
+	b.next(hasPage(1))
+	saved["title"] = "Entrée principale"
+	a.call("savePage", map[string]any{"value": saved})
+	b.next(hasPage(2))
+	if r := b.call("page", map[string]any{"value": saved["id"]}); r["result"].(map[string]any)["title"] != "Entrée principale" {
+		t.Errorf("page = %v", r)
+	}
+
+	// can follows the level: the guest reads, the admin acts.
+	invokes := func(app *testApp) int {
+		services, _ := app.call("services", nil)["result"].([]any)
+		svc, _ := services[0].(map[string]any)
+		can, _ := svc["can"].(map[string]any)
+		list, _ := can["invoke"].([]any)
+		return len(list)
+	}
+	if n := invokes(g); n != 0 {
+		t.Errorf("guest may invoke %d actions, want 0", n)
+	}
+	if n := invokes(a); n != 2 {
+		t.Errorf("admin may invoke %d actions, want 2", n)
+	}
+
 	// Last app gone: the upstream sockets are closed.
 	a.conn.Close()
 	b.call("unobserve", map[string]any{"thing": "urn:test", "name": "temp"})

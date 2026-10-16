@@ -6,6 +6,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -128,8 +129,8 @@ func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
 	if in.Type != nil && *in.Type != "" && !slices.Contains(terminalTypes, *in.Type) {
 		return Terminal{}, errInvalid
 	}
-	// ponytail: theme, aspect and page ids are stored as given; they are
-	// checked against the installed themes and pages once those exist (lots 15, 18).
+	// ponytail: theme and aspect are stored as given; they are checked
+	// against the installed themes once those exist (lot 18).
 	set := map[string]any{}
 	if in.Name != nil {
 		set["name"] = strings.TrimSpace(*in.Name)
@@ -140,6 +141,9 @@ func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
 		}
 	}
 	if in.Pages != nil {
+		if !a.sharedPagesExist(*in.Pages) {
+			return Terminal{}, fmt.Errorf("%w: a terminal only shows existing shared pages", errInvalid)
+		}
 		pages, _ := json.Marshal(append([]string{}, *in.Pages...))
 		set["pages"] = string(pages)
 	}

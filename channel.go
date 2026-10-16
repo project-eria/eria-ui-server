@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,10 @@ func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
 	s.client = ch.hub.attach(term.ID)
 	go ch.hub.writeLoop(conn, s.client)
 	ch.hub.push(s.client, map[string]any{"push": "welcome", "terminal": term, "profile": s.profile})
+	s.pushResources()
+	ch.hub.mu.Lock()
+	s.client.resources = s.pushResources
+	ch.hub.mu.Unlock()
 	s.readLoop(conn)
 	ch.hub.drop(s.client)
 }
@@ -129,6 +134,28 @@ func (s *session) readLoop(conn *websocket.Conn) {
 			s.ch.hub.push(s.client, reply{ID: req.ID, Error: fail(failInvalid, "too many requests at once")})
 		}
 	}
+}
+
+// pushResources sends the resource manifest of this connection (PLAN §10):
+// the theme and aspect of the terminal, and the versions of its pages. The
+// app downloads what changed and keeps a local copy.
+func (s *session) pushResources() {
+	t, err := s.ch.auth.terminal(`id = ?`, s.terminal)
+	if err != nil {
+		return // forgotten meanwhile
+	}
+	pages, err := s.ch.auth.Manifest(s.terminal, s.viewer())
+	if err != nil {
+		zlog.Error().Err(err).Msg("[channel:pushResources]")
+		return
+	}
+	s.ch.hub.push(s.client, map[string]any{"push": "resources", "theme": t.Theme, "aspect": t.Aspect, "pages": pages})
+}
+
+func (s *session) viewer() *Profile {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.profile
 }
 
 // level is the access level of the connection: the profile's, or 9.
@@ -163,12 +190,14 @@ func (s *session) handle(req request) (any, *opError) {
 		s.mu.Lock()
 		s.profile, s.token = &p, token
 		s.mu.Unlock()
+		s.pushResources() // the profile's own pages
 		return map[string]any{"token": token, "profile": p}, nil
 	case "logout":
 		s.mu.Lock()
 		auth.Logout(s.token)
 		s.profile, s.token = nil, ""
 		s.mu.Unlock()
+		s.pushResources()
 		return true, nil
 	case "reportType":
 		var detected string
@@ -177,7 +206,11 @@ func (s *session) handle(req request) (any, *opError) {
 
 	// --- Services ---
 	case "services":
-		return s.ch.registry.Services(), nil
+		services := s.ch.registry.Services()
+		for i := range services {
+			services[i].Can = can(services[i], s.level())
+		}
+		return services, nil
 	case "contexts":
 		list, err := auth.Contexts()
 		return list, internal(err)
@@ -212,6 +245,36 @@ func (s *session) handle(req request) (any, *opError) {
 			return nil, fail(failInvalid, "unknown Thing or action")
 		}
 		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value)
+
+	// --- Pages ---
+	case "page":
+		var id string
+		json.Unmarshal(req.Value, &id)
+		p, err := auth.Page(s.viewer(), id)
+		return p, invalid(err)
+	case "pages":
+		list, err := auth.Pages(s.viewer())
+		return list, internal(err)
+	case "savePage":
+		var in Page
+		if json.Unmarshal(req.Value, &in) != nil {
+			return nil, fail(failInvalid, "bad page")
+		}
+		p, err := auth.SavePage(s.viewer(), in)
+		if err != nil {
+			return nil, pageError(err)
+		}
+		s.ch.hub.refresh("") // ponytail: every app re-reads its manifest; fine for a household
+		return p, nil
+	case "deletePage":
+		var id string
+		json.Unmarshal(req.Value, &id)
+		if err := auth.DeletePage(s.viewer(), id); err != nil {
+			return nil, pageError(err)
+		}
+		s.ch.hub.refresh("")
+		return true, nil
+
 	case "observe", "unobserve", "subscribe", "unsubscribe":
 		k := feedKey{req.Thing, kindProperty, req.Name}
 		if req.Op == "subscribe" || req.Op == "unsubscribe" {
@@ -245,6 +308,7 @@ func (s *session) handle(req request) (any, *opError) {
 			return nil, invalid(err)
 		}
 		s.ch.hub.broadcast(t.ID, map[string]any{"push": "terminal", "terminal": t})
+		s.ch.hub.refresh(t.ID)
 		return t, nil
 	case "forgetTerminal":
 		var id string
@@ -333,6 +397,37 @@ func callThing(td TD, method, url string, body []byte) (json.RawMessage, *opErro
 		return json.RawMessage("null"), nil
 	}
 	return data, nil
+}
+
+// can is the provisional rule until auth computes it with authz (lot 19):
+// reading for everyone, commands for every signed-in level below 9.
+func can(svc Service, level int) *Can {
+	c := &Can{Read: []string{}, Write: []string{}, Invoke: []string{}}
+	for name, p := range svc.Properties {
+		c.Read = append(c.Read, name)
+		if level < notSignedIn && !p.ReadOnly {
+			c.Write = append(c.Write, name)
+		}
+	}
+	if level < notSignedIn {
+		for name := range svc.Actions {
+			c.Invoke = append(c.Invoke, name)
+		}
+	}
+	slices.Sort(c.Read)
+	slices.Sort(c.Write)
+	slices.Sort(c.Invoke)
+	return c
+}
+
+func pageError(err error) *opError {
+	switch {
+	case errors.Is(err, errForbidden):
+		return fail(failRefused, err.Error())
+	case errors.Is(err, errPageNotFound), errors.Is(err, errPageStale), errors.Is(err, errPageInvalid):
+		return fail(failInvalid, err.Error())
+	}
+	return internal(err)
 }
 
 func internal(err error) *opError {

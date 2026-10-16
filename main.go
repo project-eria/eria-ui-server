@@ -1,6 +1,6 @@
 // eria-ui-server: relay between the ERIA app (eria-ui-app) and the WoT Things of
 // the LAN. Discovers the Things, exposes them as services, relays commands and
-// observations, and keeps the accounts and screens.
+// observations, and keeps the accounts, terminals and pages.
 package main
 
 import (
@@ -24,7 +24,7 @@ type Context struct {
 var config = struct {
 	Host     string `yaml:"host,omitempty"`
 	Port     uint   `yaml:"port" default:"8090"`
-	Database string `yaml:"database" default:"eria-ui-server.db"` // SQLite file: profiles, sessions, screens
+	Database string `yaml:"database" default:"eria-ui-server.db"` // SQLite file: profiles, sessions, terminals, pages
 	// First admin's PIN, used only while there is no profile. The orchestrator's
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
@@ -100,7 +100,6 @@ func main() {
 
 func withAuth(mux *http.ServeMux, auth *Auth) http.Handler {
 	auth.Routes(mux)
-	auth.ScreenRoutes(mux)
 	PackRoutes(mux, auth.PacksDir)
 	return auth.Protect(mux)
 }

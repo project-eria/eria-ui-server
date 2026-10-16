@@ -38,9 +38,10 @@ type feed struct {
 }
 
 type client struct {
-	send     chan []byte
-	feeds    map[feedKey]bool
-	terminal string // public id of the terminal on the other end
+	send      chan []byte
+	feeds     map[feedKey]bool
+	terminal  string // public id of the terminal on the other end
+	resources func() // pushes the resource manifest again (channel.go)
 }
 
 // pushMsg is a message the server sends without being asked.
@@ -338,6 +339,22 @@ func (h *Hub) broadcast(terminal string, v any) {
 		if terminal == "" || c.terminal == terminal {
 			h.sendLocked(c, msg)
 		}
+	}
+}
+
+// refresh pushes the resource manifest again to every app, or to the apps
+// of one terminal.
+func (h *Hub) refresh(terminal string) {
+	h.mu.Lock()
+	var todo []func()
+	for c := range h.clients {
+		if c.resources != nil && (terminal == "" || c.terminal == terminal) {
+			todo = append(todo, c.resources)
+		}
+	}
+	h.mu.Unlock()
+	for _, f := range todo {
+		f() // outside the lock: it reads the database, then pushes
 	}
 }
 

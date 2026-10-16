@@ -60,6 +60,15 @@ type Service struct {
 	Properties map[string]Property `json:"properties"`
 	Actions    map[string]Action   `json:"actions"`
 	Events     map[string]Event    `json:"events,omitempty"`
+	Can        *Can                `json:"can,omitempty"` // what the viewer may do, per connection
+}
+
+// Can lists the operations a viewer may do on a service (PLAN §5.00): the
+// widgets adapt to it. Display only: the Thing decides.
+type Can struct {
+	Read   []string `json:"read"`
+	Write  []string `json:"write"`
+	Invoke []string `json:"invoke"`
 }
 
 const genericCapability = "generic"

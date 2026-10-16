@@ -3,7 +3,7 @@
 Relay between the ERIA app ([eria-ui-app](https://github.com/project-eria/eria-ui-app)) and
 the services of the house (lights, shutters, contexts…): mDNS discovery of the WoT Things, one
 WebSocket per app for commands, observations, events and settings (below), profiles + PIN,
-terminals, custom screens, widget packs. Design and plan: eria-ui-app's `PLAN.md` (§2.1, §2.2).
+terminals, pages, widget packs. Design and plan: eria-ui-app's `PLAN.md` (§2.1, §2.2).
 
 ## Channel (`/api/ws`)
 
@@ -21,7 +21,12 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `login` | `profile`, `pin` | `{token, profile}`; the connection is signed in |
 | `logout` | — | `true` |
 | `reportType` | `value`: `watch` … `tv` | `true` (type deduced from the screen) |
-| `services`, `contexts` | — | lists |
+| `services` | — | services, each with `can {read, write, invoke}` for this connection |
+| `contexts` | — | list |
+| `page` | `value`: id | page (shared, or the profile's own) |
+| `pages` | — | pages the profile may edit (all for level 0, else its own) |
+| `savePage` | `value`: page (no `id` = new; same `version` as stored) | page |
+| `deletePage` | `value`: id | `true` |
 | `read` | `thing`, `name` | value |
 | `write` | `thing`, `name`, `value` | `null` (signed in only) |
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
@@ -33,13 +38,22 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `setContexts` | `value`: `[{id, label}]` | `true` (level 0) |
 | `setHidden` | `value`: glob patterns | `true` (level 0) |
 
-Pushed: `welcome {terminal, profile}` first, then `value {thing, property, value}`,
+Pushed: `welcome {terminal, profile}` then `resources {theme, aspect, pages: [{id, version}]}`
+first (again after sign-in or out, and whenever a page or the terminal changes), then
+`value {thing, property, value}`,
 `event {thing, event, value}`, `online {thing, online}`, `things-changed`, `contexts-changed`,
 `terminal {terminal}` (its settings changed). Levels are provisional (admin 0, member 1,
 guest 9 = not signed in) until accounts move to `auth`.
 
-Profiles, screens and preferences still use HTTP (`/api/profiles`, `/api/screens`, `/api/me`)
-with the same bearer token, until lots 15 and 17.
+A page (eria-ui-app's PLAN §5.00) is `{id, title, shared, version, elements, options}`;
+an element is `{id, type, …, label?, hidden?, widget?, options?}` with `type` `service`
+(`thing`, `capability`), `property` / `action` / `event` (`thing`, `name`, action `input?`) or
+`app` (`name`). Shared pages are made by level 0 and assigned to terminals; personal pages
+follow their profile. `can` is provisional (reading for all, commands below level 9) until
+`authz` computes it.
+
+Profiles and preferences still use HTTP (`/api/profiles`, `/api/me`) with the same bearer
+token, until lot 17.
 
 ## Develop
 
