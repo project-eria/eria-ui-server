@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -230,7 +231,9 @@ func (s *session) handle(req request) (any, *opError) {
 		if err != nil {
 			return nil, err
 		}
-		if !isWritable(td, req.Name) {
+		// The admin's explorer writes what the TD allows; people only what
+		// the services show as writable (capability state is read-only).
+		if s.level() == 0 && td.Properties[req.Name].ReadOnly || s.level() != 0 && !isWritable(td, req.Name) {
 			return nil, fail(failRefused, "read-only property")
 		}
 		if len(req.Value) == 0 {
@@ -243,7 +246,7 @@ func (s *session) handle(req request) (any, *opError) {
 		}
 		td, ok := s.ch.registry.Thing(req.Thing)
 		a, exists := td.Actions[req.Name]
-		if !ok || !exists {
+		if !ok || !exists || !s.visible(req.Thing) {
 			return nil, fail(failInvalid, "unknown Thing or action")
 		}
 		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value)
@@ -293,6 +296,9 @@ func (s *session) handle(req request) (any, *opError) {
 			s.ch.hub.unfollow(s.client, k)
 			return true, nil
 		}
+		if !s.visible(req.Thing) {
+			return nil, fail(failInvalid, "unknown Thing")
+		}
 		if err := s.ch.hub.follow(s.client, k); err != nil {
 			return nil, err
 		}
@@ -328,6 +334,31 @@ func (s *session) handle(req request) (any, *opError) {
 		return true, invalid(auth.DeleteProfile(id))
 	case "themes":
 		return Themes(s.ch.themes), nil
+
+	// --- Things explorer ---
+	case "things":
+		return s.ch.registry.Things(), nil
+	case "td":
+		raw, ok := s.ch.registry.Raw(req.Thing)
+		if !ok {
+			return nil, fail(failInvalid, "unknown Thing")
+		}
+		return raw, nil
+	case "addThing":
+		var address string
+		json.Unmarshal(req.Value, &address)
+		info, err := s.ch.addThing(address)
+		if err != nil {
+			return nil, err
+		}
+		return info, nil
+	case "forgetThing":
+		if !auth.RemoveManual(req.Thing) {
+			return nil, fail(failInvalid, "only a Thing added by address can be forgotten")
+		}
+		s.ch.registry.Forget(req.Thing)
+		s.ch.hub.broadcast("", map[string]string{"push": "things-changed"})
+		return true, nil
 	case "configureTerminal":
 		var in TerminalChange
 		if json.Unmarshal(req.Value, &in) != nil {
@@ -372,14 +403,24 @@ func (s *session) handle(req request) (any, *opError) {
 		if err := auth.SetHidden(list); err != nil {
 			return nil, invalid(err)
 		}
-		s.ch.registry.SetHide(list) // the status watcher then pushes things-changed
+		s.ch.registry.SetHide(list)
+		s.ch.hub.broadcast("", map[string]string{"push": "things-changed"})
 		return true, nil
 	}
 	return nil, fail(failInvalid, "unknown op")
 }
 
+// visible tells whether this connection may reach a Thing: hidden ones are
+// for the admin only.
+func (s *session) visible(id string) bool {
+	return s.level() == 0 || !s.ch.registry.Hidden(id)
+}
+
 func (s *session) property(req request) (TD, Property, *opError) {
 	td, ok := s.ch.registry.Thing(req.Thing)
+	if !s.visible(req.Thing) {
+		ok = false
+	}
 	p, exists := td.Properties[req.Name]
 	switch {
 	case !ok || !exists:
@@ -482,4 +523,37 @@ func invalid(err error) *opError {
 func bearer(r *http.Request) string {
 	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	return token
+}
+
+// addThing reads the TD at an address typed by the admin (a TD URL, or a
+// host whose /.well-known/wot answers) and keeps it, polled from then on.
+func (ch *Channel) addThing(address string) (any, *opError) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil, fail(failInvalid, "no address")
+	}
+	if !strings.Contains(address, "://") {
+		address = "http://" + address
+	}
+	u, err := url.Parse(address)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fail(failInvalid, "invalid address")
+	}
+	candidates := []string{address}
+	if u.Path == "" || u.Path == "/" {
+		candidates = append(candidates, strings.TrimSuffix(address, "/")+"/.well-known/wot")
+	}
+	for _, c := range candidates {
+		td, raw, err := fetchTD(c)
+		if err != nil {
+			continue
+		}
+		if err := ch.auth.AddManual(td.ID, c); err != nil {
+			return nil, internal(err)
+		}
+		ch.registry.add(td, raw, c, true, time.Now())
+		ch.hub.broadcast("", map[string]string{"push": "things-changed"})
+		return map[string]string{"id": td.ID, "url": c}, nil
+	}
+	return nil, fail(failOffline, "no Thing Description at this address")
 }

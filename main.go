@@ -79,6 +79,7 @@ func main() {
 		}
 	}()
 
+	go registry.Poll(ctx, auth.ManualURLs)
 	hub := NewHub(registry)
 	go hub.WatchStatus(ctx)
 	go announce(ctx, int(config.Port))

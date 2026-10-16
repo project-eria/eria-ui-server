@@ -27,13 +27,19 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `pages` | — | pages the profile may edit (all for level 0, else its own) |
 | `savePage` | `value`: page (no `id` = new; same `version` as stored) | page |
 | `deletePage` | `value`: id | `true` |
-| `read` | `thing`, `name` | value |
+| `read` | `thing`, `name` | value (hidden Things: level 0 only, as for every Thing op) |
 | `write` | `thing`, `name`, `value` | `null` (signed in only) |
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
 | `observe` / `unobserve` | `thing`, `name` (property) | `true` |
 | `subscribe` / `unsubscribe` | `thing`, `name` (event) | `true` |
 | `adminProfiles` | — | profiles with their role (level 0) |
 | `createProfile` / `updateProfile` / `deleteProfile` | `value`: `{name, role, pin}` / `{id, name?, role?, pin?}` / id | profile / `true` (level 0) |
+| `things` | — | every known Thing `{id, title, url, online, hidden, manual}` (level 0) |
+| `td` | `thing` | the Thing's TD as received (level 0) |
+| `addThing` | `value`: TD URL or host (then `/.well-known/wot`) | `{id, url}`; kept and polled (level 0) |
+| `forgetThing` | `thing` | `true`, for a Thing added by address (level 0) |
+| `themes` | — | signed themes of the themes folder (level 0) |
+| `theme` | `value`: id | `{archive (base64), signature}` |
 | `terminals`, `hidden` | — | lists (level 0) |
 | `configureTerminal` | `value`: `{id, name?, type?, theme?, aspect?, pages?}` | terminal (level 0) |
 | `forgetTerminal` | `value`: id | `true` (level 0) |

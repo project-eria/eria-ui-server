@@ -343,9 +343,52 @@ func TestChannel(t *testing.T) {
 	// Hiding a Thing forgets it; forgetting a terminal disconnects it.
 	admin := dial(secret1, token)
 	admin.push("welcome")
+	// Hidden Things: kept for the admin's explorer, unreachable for others.
 	admin.call("setHidden", map[string]any{"value": []string{"urn:test"}})
-	if _, ok := registry.Thing("urn:test"); ok {
-		t.Error("hidden Thing still known")
+	if !registry.Hidden("urn:test") || len(registry.Services()) != 0 {
+		t.Error("hidden Thing still shown as services")
+	}
+	if r := g.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); errType(r) != failInvalid {
+		t.Errorf("guest reads a hidden Thing = %v, want invalid", r)
+	}
+	if r := admin.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); r["result"] != float64(42) {
+		t.Errorf("admin reads a hidden Thing = %v", r)
+	}
+	if r := admin.call("write", map[string]any{"thing": "urn:test", "name": "mode", "value": 2}); r["error"] != nil {
+		t.Errorf("admin writes a TD-writable property = %v", r)
+	}
+	things, _ := admin.call("things", nil)["result"].([]any)
+	if len(things) != 1 || things[0].(map[string]any)["hidden"] != true {
+		t.Errorf("things = %v", things)
+	}
+	if r := admin.call("td", map[string]any{"thing": "urn:test"}); r["error"] != nil {
+		t.Errorf("td = %v", r)
+	}
+
+	// A Thing added by address is kept, polled, and can be forgotten.
+	tdServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/wot" {
+			w.Write([]byte(`{"id":"urn:manual","title":"Manuel","properties":{},"actions":{}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer tdServer.Close()
+	r = admin.call("addThing", map[string]any{"value": strings.TrimPrefix(tdServer.URL, "http://")})
+	if added, _ := r["result"].(map[string]any); added["id"] != "urn:manual" {
+		t.Fatalf("addThing = %v", r)
+	}
+	if urls := auth.ManualURLs(); len(urls) != 1 || !strings.HasSuffix(urls[0], "/.well-known/wot") {
+		t.Errorf("manual URLs = %v", urls)
+	}
+	if r := admin.call("forgetThing", map[string]any{"thing": "urn:test"}); errType(r) != failInvalid {
+		t.Errorf("forget an mDNS Thing = %v, want invalid", r)
+	}
+	if r := admin.call("forgetThing", map[string]any{"thing": "urn:manual"}); r["error"] != nil {
+		t.Errorf("forgetThing = %v", r)
+	}
+	if r := g.call("things", nil); errType(r) != failRefused {
+		t.Errorf("guest lists Things = %v, want refused", r)
 	}
 	admin.call("forgetTerminal", map[string]any{"value": id2})
 	b.conn.SetReadDeadline(time.Now().Add(2 * time.Second))

@@ -16,6 +16,7 @@ func (a *Auth) migrateSettings() error {
 			position INTEGER NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS hidden (pattern TEXT PRIMARY KEY);
+		CREATE TABLE IF NOT EXISTS manual_things (id TEXT PRIMARY KEY, url TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS seeded (name TEXT PRIMARY KEY);`)
 	return err
 }
@@ -111,4 +112,35 @@ func (a *Auth) SetHidden(patterns []string) error {
 		tx.Exec(`INSERT OR IGNORE INTO hidden (pattern) VALUES (?)`, p)
 	}
 	return tx.Commit()
+}
+
+// ManualURLs lists the TD addresses of the Things the admin added by hand.
+func (a *Auth) ManualURLs() []string {
+	rows, err := a.db.Query(`SELECT url FROM manual_things`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var urls []string
+	for rows.Next() {
+		var u string
+		rows.Scan(&u)
+		urls = append(urls, u)
+	}
+	return urls
+}
+
+func (a *Auth) AddManual(id, url string) error {
+	_, err := a.db.Exec(`INSERT INTO manual_things (id, url) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET url = excluded.url`, id, url)
+	return err
+}
+
+// RemoveManual forgets a Thing added by hand; false when it was not one.
+func (a *Auth) RemoveManual(id string) bool {
+	res, err := a.db.Exec(`DELETE FROM manual_things WHERE id = ?`, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
 }
