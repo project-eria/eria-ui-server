@@ -358,6 +358,17 @@ func (h *Hub) refresh(terminal string) {
 	}
 }
 
+// connected tells which terminals have an app connected now.
+func (h *Hub) connected() map[string]bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	on := map[string]bool{}
+	for c := range h.clients {
+		on[c.terminal] = true
+	}
+	return on
+}
+
 // disconnect closes every connection of a terminal (forgotten by the admin).
 func (h *Hub) disconnect(terminal string) {
 	h.mu.Lock()

@@ -2,22 +2,23 @@ package main
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 )
 
-// Pages (PLAN §5.00): a page is a flat list of functions to show, independent
-// of any theme; the theme of the terminal renders it. A shared page (no
-// owner) is made by the admin and assigned to terminals; a personal page
-// belongs to a profile and follows it on every terminal.
+// Pages (eria-ui-app PLAN §5.000): every page is shared and shown on every
+// terminal; the admin creates them. A page is a flat list of functions,
+// rendered by the theme, aspect and layout chosen at its creation (fixed
+// from then on: another look means another page).
 
 type Page struct {
 	ID       string          `json:"id"`
 	Title    string          `json:"title"`
-	Shared   bool            `json:"shared"`
+	Theme    string          `json:"theme"`   // "" = Base; fixed at creation
+	Aspect   string          `json:"aspect"`  // one of the theme's aspects; fixed at creation
+	Layout   string          `json:"layout"`  // a page type of the theme, or a Base layout; fixed at creation
 	Version  int             `json:"version"` // +1 at each save, checked against conflicts
 	Elements []Element       `json:"elements"`
 	Options  json.RawMessage `json:"options"` // {<theme>: {…}}
@@ -59,13 +60,28 @@ func (a *Auth) migratePages() error {
 		DROP TABLE IF EXISTS screens;
 		CREATE TABLE IF NOT EXISTS pages (
 			id       TEXT PRIMARY KEY,
-			owner    INTEGER REFERENCES profiles(id) ON DELETE CASCADE,
 			title    TEXT NOT NULL,
+			theme    TEXT NOT NULL DEFAULT '',
+			aspect   TEXT NOT NULL DEFAULT '',
+			layout   TEXT NOT NULL DEFAULT '',
 			version  INTEGER NOT NULL,
 			elements TEXT NOT NULL,
 			options  TEXT NOT NULL
 		)`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Older databases (lot 15): theme, aspect and layout columns added.
+	for _, column := range []string{"theme", "aspect", "layout"} {
+		var n int
+		a.db.QueryRow(`SELECT count(*) FROM pragma_table_info('pages') WHERE name = ?`, column).Scan(&n)
+		if n == 0 {
+			if _, err := a.db.Exec(`ALTER TABLE pages ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func validPage(p Page) error {
@@ -105,48 +121,38 @@ func isObject(raw json.RawMessage) bool {
 	return len(raw) == 0 || json.Unmarshal(raw, &v) == nil && v != nil
 }
 
-func (a *Auth) scanPage(row interface{ Scan(...any) error }) (Page, sql.NullInt64, error) {
+func scanPage(row interface{ Scan(...any) error }) (Page, error) {
 	var p Page
-	var owner sql.NullInt64
 	var elements, options string
-	if err := row.Scan(&p.ID, &owner, &p.Title, &p.Version, &elements, &options); err != nil {
-		return p, owner, err
+	if err := row.Scan(&p.ID, &p.Title, &p.Theme, &p.Aspect, &p.Layout, &p.Version, &elements, &options); err != nil {
+		return p, err
 	}
 	json.Unmarshal([]byte(elements), &p.Elements)
-	p.Options, p.Shared = json.RawMessage(options), !owner.Valid
-	return p, owner, nil
+	p.Options = json.RawMessage(options)
+	return p, nil
 }
 
-const pageColumns = `id, owner, title, version, elements, options`
+const pageColumns = `id, title, theme, aspect, layout, version, elements, options`
 
-// Page returns a page if the viewer may see it: the admin sees every page,
-// others the shared pages and their own.
-func (a *Auth) Page(viewer *Profile, id string) (Page, error) {
-	p, owner, err := a.scanPage(a.db.QueryRow(`SELECT `+pageColumns+` FROM pages WHERE id = ?`, id))
-	if err != nil || (owner.Valid && !isAdmin(viewer) && (viewer == nil || viewer.ID != owner.Int64)) {
+// Page returns one page (every page is visible to everyone).
+func (a *Auth) Page(id string) (Page, error) {
+	p, err := scanPage(a.db.QueryRow(`SELECT `+pageColumns+` FROM pages WHERE id = ?`, id))
+	if err != nil {
 		return Page{}, errPageNotFound
 	}
 	return p, nil
 }
 
-// Pages lists the pages the viewer may edit: every page for the admin, its
-// own pages for anyone else.
-func (a *Auth) Pages(viewer *Profile) ([]Page, error) {
-	if viewer == nil {
-		return []Page{}, nil
-	}
-	query, args := `SELECT `+pageColumns+` FROM pages ORDER BY title`, []any{}
-	if !isAdmin(viewer) {
-		query, args = `SELECT `+pageColumns+` FROM pages WHERE owner = ? ORDER BY title`, []any{viewer.ID}
-	}
-	rows, err := a.db.Query(query, args...)
+// Pages lists every page, by title.
+func (a *Auth) Pages() ([]Page, error) {
+	rows, err := a.db.Query(`SELECT ` + pageColumns + ` FROM pages ORDER BY title`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	list := []Page{}
 	for rows.Next() {
-		p, _, err := a.scanPage(rows)
+		p, err := scanPage(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -155,10 +161,10 @@ func (a *Auth) Pages(viewer *Profile) ([]Page, error) {
 	return list, rows.Err()
 }
 
-// SavePage creates a page (empty id) or updates it (same version as stored).
-// Only the admin makes shared pages; anyone signed in makes personal ones.
+// SavePage creates a page (empty id) or updates it (same version as stored;
+// theme, aspect and layout kept as created). Level 0 only.
 func (a *Auth) SavePage(editor *Profile, in Page) (Page, error) {
-	if editor == nil || editor.Level >= notSignedIn {
+	if !isAdmin(editor) {
 		return Page{}, errForbidden
 	}
 	if err := validPage(in); err != nil {
@@ -173,28 +179,24 @@ func (a *Auth) SavePage(editor *Profile, in Page) (Page, error) {
 	elements, _ := json.Marshal(in.Elements)
 	title := strings.TrimSpace(in.Title)
 	if in.ID == "" {
-		if in.Shared && !isAdmin(editor) {
-			return Page{}, errForbidden
-		}
-		owner := sql.NullInt64{Int64: editor.ID, Valid: !in.Shared}
 		raw := make([]byte, 10)
 		rand.Read(raw)
 		in.ID = publicIDs.EncodeToString(raw)
-		_, err := a.db.Exec(`INSERT INTO pages (id, owner, title, version, elements, options) VALUES (?, ?, ?, 1, ?, ?)`,
-			in.ID, owner, title, string(elements), string(in.Options))
+		_, err := a.db.Exec(`INSERT INTO pages (id, title, theme, aspect, layout, version, elements, options) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+			in.ID, title, in.Theme, in.Aspect, in.Layout, string(elements), string(in.Options))
 		if err != nil {
 			return Page{}, err
 		}
-		return a.Page(editor, in.ID)
+		return a.Page(in.ID)
 	}
-	stored, err := a.Page(editor, in.ID)
+	stored, err := a.Page(in.ID)
 	switch {
 	case err != nil:
 		return Page{}, err
-	case stored.Shared && !isAdmin(editor):
-		return Page{}, errForbidden
 	case stored.Version != in.Version:
 		return Page{}, errPageStale
+	case in.Theme != stored.Theme || in.Aspect != stored.Aspect || in.Layout != stored.Layout:
+		return Page{}, fmt.Errorf("%w: theme, aspect and layout are fixed at creation", errPageInvalid)
 	}
 	res, err := a.db.Exec(`UPDATE pages SET title = ?, version = version + 1, elements = ?, options = ? WHERE id = ? AND version = ?`,
 		title, string(elements), string(in.Options), in.ID, in.Version)
@@ -204,70 +206,42 @@ func (a *Auth) SavePage(editor *Profile, in Page) (Page, error) {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Page{}, errPageStale
 	}
-	return a.Page(editor, in.ID)
+	return a.Page(in.ID)
 }
 
-// DeletePage removes a page, and from the terminals it was assigned to.
+// DeletePage removes a page. Level 0 only.
 func (a *Auth) DeletePage(editor *Profile, id string) error {
-	stored, err := a.Page(editor, id)
-	switch {
-	case err != nil:
-		return err
-	case editor.Level >= notSignedIn || stored.Shared && !isAdmin(editor):
+	if !isAdmin(editor) {
 		return errForbidden
 	}
-	tx, err := a.db.Begin()
-	if err != nil {
+	if _, err := a.Page(id); err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	tx.Exec(`DELETE FROM pages WHERE id = ?`, id)
-	tx.Exec(`UPDATE terminals SET pages = (SELECT coalesce(json_group_array(value), '[]') FROM json_each(terminals.pages) WHERE value != ?)
-		WHERE EXISTS (SELECT 1 FROM json_each(terminals.pages) WHERE value = ?)`, id, id)
-	return tx.Commit()
+	_, err := a.db.Exec(`DELETE FROM pages WHERE id = ?`, id)
+	return err
 }
 
-// Manifest lists the pages shown on a terminal: its own (assigned by the
-// admin, in order), then those of the signed-in profile.
-func (a *Auth) Manifest(terminal string, viewer *Profile) ([]PageRef, error) {
-	t, err := a.terminal(`id = ?`, terminal)
+// Manifest lists every page with its version, and the themes they use.
+func (a *Auth) Manifest() (pages []PageRef, themes []string, err error) {
+	rows, err := a.db.Query(`SELECT id, version, theme FROM pages ORDER BY title`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	refs := []PageRef{}
-	for _, id := range t.Pages {
-		var version int
-		if a.db.QueryRow(`SELECT version FROM pages WHERE id = ? AND owner IS NULL`, id).Scan(&version) == nil {
-			refs = append(refs, PageRef{id, version})
+	defer rows.Close()
+	pages, seen := []PageRef{}, map[string]bool{}
+	for rows.Next() {
+		var r PageRef
+		var theme string
+		rows.Scan(&r.ID, &r.Version, &theme)
+		pages = append(pages, r)
+		if theme != "" && !seen[theme] {
+			seen[theme] = true
+			themes = append(themes, theme)
 		}
 	}
-	if viewer != nil {
-		rows, err := a.db.Query(`SELECT id, version FROM pages WHERE owner = ? ORDER BY title`, viewer.ID)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var r PageRef
-			rows.Scan(&r.ID, &r.Version)
-			refs = append(refs, r)
-		}
-	}
-	return refs, nil
+	return pages, themes, rows.Err()
 }
 
-// sharedPagesExist tells whether every id names a shared page (terminal
-// assignment).
-func (a *Auth) sharedPagesExist(ids []string) bool {
-	for _, id := range ids {
-		var n int
-		if a.db.QueryRow(`SELECT count(*) FROM pages WHERE id = ? AND owner IS NULL`, id).Scan(&n); n == 0 {
-			return false
-		}
-	}
-	return true
-}
+func isAdmin(p *Profile) bool { return p != nil && p.Level == levelAdmin }
 
-func isAdmin(p *Profile) bool { return p != nil && p.Level == 0 }
-
-var errForbidden = errors.New("not allowed to change this page")
+var errForbidden = errors.New("not allowed to change pages")

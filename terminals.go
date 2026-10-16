@@ -4,9 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base32"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -15,15 +13,13 @@ import (
 // and sends it when it connects; the server keeps only its hash, and shows a
 // separate public id and a short code derived from it.
 type Terminal struct {
-	ID           string   `json:"id"`   // public
-	Code         string   `json:"code"` // to find the terminal in the administration
-	Name         string   `json:"name"`
-	Type         string   `json:"type"` // "" = detected type
-	DetectedType string   `json:"detectedType"`
-	Theme        string   `json:"theme"`  // "" = Base
-	Aspect       string   `json:"aspect"` // "" = the theme's first aspect
-	Pages        []string `json:"pages"`  // page ids assigned to the terminal (PLAN §5.0)
-	LastSeen     int64    `json:"lastSeen"`
+	ID           string `json:"id"`   // public
+	Code         string `json:"code"` // to find the terminal in the administration
+	Name         string `json:"name"`
+	Type         string `json:"type"` // "" = detected type
+	DetectedType string `json:"detectedType"`
+	LastSeen     int64  `json:"lastSeen"`
+	Online       bool   `json:"online"` // an app of this terminal is connected now
 }
 
 // Terminal types, smallest to largest (PLAN §5.4).
@@ -72,16 +68,16 @@ func (a *Auth) Identify(secret string) (Terminal, error) {
 	return a.terminal(`secret_hash = ?`, hash)
 }
 
-const terminalColumns = `id, name, type, detected_type, theme, aspect, pages, last_seen`
+// ponytail: the theme, aspect and pages columns of older databases stay
+// unused (PLAN §5.000: pages are on every terminal, their look is theirs).
+const terminalColumns = `id, name, type, detected_type, last_seen`
 
 func scanTerminal(row interface{ Scan(...any) error }) (Terminal, error) {
 	var t Terminal
-	var pages string
-	if err := row.Scan(&t.ID, &t.Name, &t.Type, &t.DetectedType, &t.Theme, &t.Aspect, &pages, &t.LastSeen); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.Type, &t.DetectedType, &t.LastSeen); err != nil {
 		return t, err
 	}
 	t.Code = strings.ToUpper(t.ID[:6])
-	json.Unmarshal([]byte(pages), &t.Pages)
 	return t, nil
 }
 
@@ -117,38 +113,22 @@ func (a *Auth) ReportType(id, detected string) error {
 
 // TerminalChange holds the settings an admin changes; nil fields are kept.
 type TerminalChange struct {
-	ID     string    `json:"id"`
-	Name   *string   `json:"name"`
-	Type   *string   `json:"type"` // "" = detected
-	Theme  *string   `json:"theme"`
-	Aspect *string   `json:"aspect"`
-	Pages  *[]string `json:"pages"`
+	ID   string  `json:"id"`
+	Name *string `json:"name"`
+	Type *string `json:"type"` // "" = detected
 }
 
 func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
 	if in.Type != nil && *in.Type != "" && !slices.Contains(terminalTypes, *in.Type) {
 		return Terminal{}, errInvalid
 	}
-	// ponytail: the aspect is stored as given; an unknown one shows the
-	// theme's first aspect.
-	set := map[string]any{}
 	if in.Name != nil {
-		set["name"] = strings.TrimSpace(*in.Name)
-	}
-	for column, v := range map[string]*string{"type": in.Type, "theme": in.Theme, "aspect": in.Aspect} {
-		if v != nil {
-			set[column] = *v
+		if _, err := a.db.Exec(`UPDATE terminals SET name = ? WHERE id = ?`, strings.TrimSpace(*in.Name), in.ID); err != nil {
+			return Terminal{}, err
 		}
 	}
-	if in.Pages != nil {
-		if !a.sharedPagesExist(*in.Pages) {
-			return Terminal{}, fmt.Errorf("%w: a terminal only shows existing shared pages", errInvalid)
-		}
-		pages, _ := json.Marshal(append([]string{}, *in.Pages...))
-		set["pages"] = string(pages)
-	}
-	for column, v := range set {
-		if _, err := a.db.Exec(`UPDATE terminals SET `+column+` = ? WHERE id = ?`, v, in.ID); err != nil {
+	if in.Type != nil {
+		if _, err := a.db.Exec(`UPDATE terminals SET type = ? WHERE id = ?`, *in.Type, in.ID); err != nil {
 			return Terminal{}, err
 		}
 	}

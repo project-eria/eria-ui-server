@@ -14,10 +14,8 @@ func TestPages(t *testing.T) {
 	}
 	auth.Bootstrap("1234")
 	admin := &Profile{ID: 1, Level: 0}
-	m1p, _ := auth.CreateProfile("Marlène", RoleMember, "5678")
-	m2p, _ := auth.CreateProfile("Lia", RoleMember, "2468")
-	gp, _ := auth.CreateProfile("Invité", RoleGuest, "0000")
-	m1, m2, guest := &m1p, &m2p, &gp
+	mp, _ := auth.CreateProfile("Marlène", 5, "5678")
+	member := &mp
 	mustErr := func(what string, got, want error) {
 		t.Helper()
 		if !errors.Is(got, want) {
@@ -38,61 +36,41 @@ func TestPages(t *testing.T) {
 		mustErr(what, err, errPageInvalid)
 	}
 
-	// Shared pages: admin only; personal pages: their owner only.
-	_, err = auth.SavePage(m1, Page{Title: "Salon", Shared: true})
-	mustErr("member makes a shared page", err, errForbidden)
-	_, err = auth.SavePage(guest, Page{Title: "Mine"})
-	mustErr("guest makes a page", err, errForbidden)
-	salon, err := auth.SavePage(admin, Page{Title: "Salon", Shared: true, Elements: []Element{light}})
-	if err != nil || salon.Version != 1 || !salon.Shared || string(salon.Options) != "{}" {
-		t.Fatalf("shared page = %+v, %v", salon, err)
+	// Pages are made by level 0 only, with their theme, aspect and layout.
+	_, err = auth.SavePage(member, Page{Title: "Salon"})
+	mustErr("member makes a page", err, errForbidden)
+	salon, err := auth.SavePage(admin, Page{Title: "Salon", Aspect: "contraste-dark", Layout: "grid", Elements: []Element{light}})
+	if err != nil || salon.Version != 1 || salon.Layout != "grid" || salon.Aspect != "contraste-dark" || string(salon.Options) != "{}" {
+		t.Fatalf("page = %+v, %v", salon, err)
 	}
-	mine, _ := auth.SavePage(m1, Page{Title: "Ma chambre"})
-	if _, err := auth.Page(m2, mine.ID); !errors.Is(err, errPageNotFound) {
-		t.Error("another member sees a personal page")
-	}
-	if _, err := auth.Page(nil, salon.ID); err != nil {
-		t.Error("a shared page is hidden from a terminal nobody is signed in on")
-	}
-	salon.Title = "Salon !"
-	_, err = auth.SavePage(m1, salon)
-	mustErr("member edits a shared page", err, errForbidden)
-	if list, _ := auth.Pages(m1); len(list) != 1 || list[0].ID != mine.ID {
-		t.Errorf("member's pages = %v, want only their own", list)
+	if list, _ := auth.Pages(); len(list) != 1 {
+		t.Errorf("pages = %v", list)
 	}
 
-	// Versions: a stale save is refused.
+	// Versions and fixed look.
+	salon.Title = "Salon !"
 	if salon, err = auth.SavePage(admin, salon); err != nil || salon.Version != 2 {
 		t.Fatalf("update = %+v, %v", salon, err)
 	}
-	salon.Version = 1
-	_, err = auth.SavePage(admin, salon)
+	stale := salon
+	stale.Version = 1
+	_, err = auth.SavePage(admin, stale)
 	mustErr("stale save", err, errPageStale)
+	other := salon
+	other.Layout = "columns"
+	_, err = auth.SavePage(admin, other)
+	mustErr("layout changed after creation", err, errPageInvalid)
 
-	// Terminals show shared pages only; the manifest adds the profile's.
-	term, _ := auth.Identify("terminal-secret-000000000000")
-	ids := []string{mine.ID}
-	_, err = auth.ConfigureTerminal(TerminalChange{ID: term.ID, Pages: &ids})
-	mustErr("personal page on a terminal", err, errInvalid)
-	ids = []string{salon.ID}
-	auth.ConfigureTerminal(TerminalChange{ID: term.ID, Pages: &ids})
-	refs, _ := auth.Manifest(term.ID, m1)
-	if len(refs) != 2 || refs[0] != (PageRef{salon.ID, 2}) || refs[1].ID != mine.ID {
-		t.Errorf("manifest = %v, want the terminal's page then the profile's", refs)
-	}
-	if refs, _ := auth.Manifest(term.ID, nil); len(refs) != 1 {
-		t.Errorf("manifest without profile = %v, want the terminal's page only", refs)
+	// The manifest lists every page and the themes they use.
+	auth.SavePage(admin, Page{Title: "Cuisine", Theme: "hex", Layout: "hex-main"})
+	refs, themes, _ := auth.Manifest()
+	if len(refs) != 2 || len(themes) != 1 || themes[0] != "hex" {
+		t.Errorf("manifest = %v %v", refs, themes)
 	}
 
-	// Deleting a page removes it from the terminals.
-	mustErr("member deletes a shared page", auth.DeletePage(m1, salon.ID), errForbidden)
+	mustErr("member deletes a page", auth.DeletePage(member, salon.ID), errForbidden)
 	if err := auth.DeletePage(admin, salon.ID); err != nil {
 		t.Fatal(err)
 	}
-	if term, _ = auth.Identify("terminal-secret-000000000000"); len(term.Pages) != 0 {
-		t.Errorf("terminal pages after delete = %v", term.Pages)
-	}
-	if err := auth.DeletePage(m1, mine.ID); err != nil {
-		t.Errorf("owner deletes their page: %v", err)
-	}
+	mustErr("deleted page", func() error { _, err := auth.Page(salon.ID); return err }(), errPageNotFound)
 }

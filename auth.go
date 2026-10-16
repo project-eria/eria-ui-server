@@ -19,20 +19,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Roles are provisional: permissions will move to an authorization service
-// enforced by the Things themselves (PLAN §7).
+// Levels are those of AUTH-DESIGN §2.1 (0-9, lower = more rights; 9 = read
+// only, as when nobody is signed in), stored per profile until accounts move
+// to the auth service.
 const (
-	RoleAdmin  = "admin"  // manages profiles, controls everything
-	RoleMember = "member" // controls everything
-	RoleGuest  = "guest"  // read only
+	levelAdmin  = 0
+	notSignedIn = 9
 )
-
-// levels maps the provisional roles to auth levels 0-9 (AUTH-DESIGN §2.1:
-// lower = more rights, 9 = guest or not signed in), until accounts move to auth.
-var levels = map[string]int{RoleAdmin: 0, RoleMember: 1, RoleGuest: 9}
-
-// notSignedIn is the level of a terminal nobody is signed in on.
-const notSignedIn = 9
 
 const (
 	sessionDuration = 30 * 24 * time.Hour
@@ -46,10 +39,10 @@ const (
 var pinFormat = regexp.MustCompile(`^[0-9]{4,8}$`)
 
 type Profile struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Role  string `json:"role,omitempty"`
-	Level int    `json:"level"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Level     int    `json:"level"`
+	LastLogin int64  `json:"lastLogin,omitempty"` // unix seconds, 0 = never
 }
 
 type Auth struct {
@@ -68,7 +61,8 @@ func OpenAuth(path string) (*Auth, error) {
 		CREATE TABLE IF NOT EXISTS profiles (
 			id           INTEGER PRIMARY KEY,
 			name         TEXT NOT NULL UNIQUE,
-			role         TEXT NOT NULL CHECK (role IN ('admin', 'member', 'guest')),
+			level        INTEGER NOT NULL CHECK (level BETWEEN 0 AND 9),
+			last_login   INTEGER NOT NULL DEFAULT 0,
 			pin_hash     TEXT NOT NULL,
 			failures     INTEGER NOT NULL DEFAULT 0,
 			locked_until INTEGER NOT NULL DEFAULT 0
@@ -82,6 +76,9 @@ func OpenAuth(path string) (*Auth, error) {
 		return nil, err
 	}
 	a := &Auth{db: db, now: time.Now}
+	if err := a.migrateLevels(); err != nil {
+		return nil, err
+	}
 	for _, migrate := range []func() error{a.migratePages, a.migrateTerminals, a.migrateSettings} {
 		if err := migrate(); err != nil {
 			return nil, err
@@ -99,7 +96,7 @@ func (a *Auth) Bootstrap(pin string) error {
 	if pin == "" {
 		return errors.New("no profile yet: set ERIA_UI_SERVER_ADMIN_PIN to create the first admin")
 	}
-	_, err := a.CreateProfile("Admin", RoleAdmin, pin)
+	_, err := a.CreateProfile("Admin", levelAdmin, pin)
 	if err == nil {
 		zlog.Warn().Msg("[auth:Bootstrap] First profile 'Admin' created: change its PIN")
 	}
@@ -137,25 +134,61 @@ func checkPIN(pin, encoded string) bool {
 
 // --- Profiles ---
 
-func validRole(role string) bool {
-	return role == RoleAdmin || role == RoleMember || role == RoleGuest
+// migrateLevels turns the provisional roles of older databases into levels
+// (admin 0, member 5, guest 9). The table is rebuilt with the foreign keys
+// off, so sessions and pages are kept.
+func (a *Auth) migrateLevels() error {
+	var hasRole int
+	a.db.QueryRow(`SELECT count(*) FROM pragma_table_info('profiles') WHERE name = 'role'`).Scan(&hasRole)
+	if hasRole == 0 {
+		return nil
+	}
+	a.db.Exec(`PRAGMA foreign_keys = OFF`)
+	defer a.db.Exec(`PRAGMA foreign_keys = ON`)
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`CREATE TABLE profiles_levels (
+			id           INTEGER PRIMARY KEY,
+			name         TEXT NOT NULL UNIQUE,
+			level        INTEGER NOT NULL CHECK (level BETWEEN 0 AND 9),
+			last_login   INTEGER NOT NULL DEFAULT 0,
+			pin_hash     TEXT NOT NULL,
+			failures     INTEGER NOT NULL DEFAULT 0,
+			locked_until INTEGER NOT NULL DEFAULT 0
+		)`,
+		`INSERT INTO profiles_levels (id, name, level, pin_hash, failures, locked_until)
+			SELECT id, name, CASE role WHEN 'admin' THEN 0 WHEN 'member' THEN 5 ELSE 9 END, pin_hash, failures, locked_until FROM profiles`,
+		`DROP TABLE profiles`,
+		`ALTER TABLE profiles_levels RENAME TO profiles`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-func (a *Auth) CreateProfile(name, role, pin string) (Profile, error) {
+func validLevel(level int) bool { return level >= 0 && level <= 9 }
+
+func (a *Auth) CreateProfile(name string, level int, pin string) (Profile, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || !validRole(role) || !pinFormat.MatchString(pin) {
+	if name == "" || !validLevel(level) || !pinFormat.MatchString(pin) {
 		return Profile{}, errInvalid
 	}
-	res, err := a.db.Exec(`INSERT INTO profiles (name, role, pin_hash) VALUES (?, ?, ?)`, name, role, hashPIN(pin))
+	res, err := a.db.Exec(`INSERT INTO profiles (name, level, pin_hash) VALUES (?, ?, ?)`, name, level, hashPIN(pin))
 	if err != nil {
 		return Profile{}, errConflict // name already taken
 	}
 	id, _ := res.LastInsertId()
-	return Profile{ID: id, Name: name, Role: role, Level: levels[role]}, nil
+	return Profile{ID: id, Name: name, Level: level}, nil
 }
 
 func (a *Auth) Profiles() ([]Profile, error) {
-	rows, err := a.db.Query(`SELECT id, name, role FROM profiles ORDER BY name`)
+	rows, err := a.db.Query(`SELECT id, name, level, last_login FROM profiles ORDER BY level, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -163,17 +196,17 @@ func (a *Auth) Profiles() ([]Profile, error) {
 	list := []Profile{}
 	for rows.Next() {
 		var p Profile
-		if err := rows.Scan(&p.ID, &p.Name, &p.Role); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Level, &p.LastLogin); err != nil {
 			return nil, err
 		}
-		p.Level = levels[p.Role]
 		list = append(list, p)
 	}
 	return list, rows.Err()
 }
 
-// UpdateProfile changes the given fields; the last admin can't be demoted.
-func (a *Auth) UpdateProfile(id int64, name, role, pin *string) error {
+// UpdateProfile changes the given fields; the last level-0 profile can't be
+// demoted.
+func (a *Auth) UpdateProfile(id int64, name *string, level *int, pin *string) error {
 	tx, err := a.db.Begin()
 	if err != nil {
 		return err
@@ -187,14 +220,14 @@ func (a *Auth) UpdateProfile(id int64, name, role, pin *string) error {
 			return errConflict
 		}
 	}
-	if role != nil {
-		if !validRole(*role) {
+	if level != nil {
+		if !validLevel(*level) {
 			return errInvalid
 		}
-		if *role != RoleAdmin && a.isLastAdmin(tx, id) {
+		if *level != levelAdmin && a.isLastAdmin(tx, id) {
 			return errLastAdmin
 		}
-		tx.Exec(`UPDATE profiles SET role = ? WHERE id = ?`, *role, id)
+		tx.Exec(`UPDATE profiles SET level = ? WHERE id = ?`, *level, id)
 	}
 	if pin != nil {
 		if !pinFormat.MatchString(*pin) {
@@ -221,11 +254,10 @@ func (a *Auth) DeleteProfile(id int64) error {
 }
 
 func (a *Auth) isLastAdmin(tx *sql.Tx, id int64) bool {
-	var role string
-	var admins int
-	tx.QueryRow(`SELECT role FROM profiles WHERE id = ?`, id).Scan(&role)
-	tx.QueryRow(`SELECT count(*) FROM profiles WHERE role = 'admin'`).Scan(&admins)
-	return role == RoleAdmin && admins <= 1
+	var level, admins int
+	tx.QueryRow(`SELECT level FROM profiles WHERE id = ?`, id).Scan(&level)
+	tx.QueryRow(`SELECT count(*) FROM profiles WHERE level = 0`).Scan(&admins)
+	return level == levelAdmin && admins <= 1
 }
 
 // --- Login, sessions ---
@@ -260,7 +292,7 @@ func (a *Auth) Login(id int64, pin string) (token string, wait time.Duration, er
 	raw := make([]byte, 32)
 	rand.Read(raw)
 	token = base64.RawURLEncoding.EncodeToString(raw)
-	a.db.Exec(`UPDATE profiles SET failures = 0, locked_until = 0 WHERE id = ?`, id)
+	a.db.Exec(`UPDATE profiles SET failures = 0, locked_until = 0, last_login = ? WHERE id = ?`, now.Unix(), id)
 	a.db.Exec(`DELETE FROM sessions WHERE expires < ?`, now.Unix())
 	_, err = a.db.Exec(`INSERT INTO sessions (token_hash, profile_id, expires) VALUES (?, ?, ?)`,
 		tokenHash(token), id, now.Add(sessionDuration).Unix())
@@ -275,9 +307,8 @@ func tokenHash(token string) string {
 // Session returns the profile signed in with this token.
 func (a *Auth) Session(token string) (Profile, bool) {
 	var p Profile
-	err := a.db.QueryRow(`SELECT p.id, p.name, p.role FROM sessions s JOIN profiles p ON p.id = s.profile_id
-		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(token), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Role)
-	p.Level = levels[p.Role]
+	err := a.db.QueryRow(`SELECT p.id, p.name, p.level FROM sessions s JOIN profiles p ON p.id = s.profile_id
+		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(token), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Level)
 	return p, err == nil
 }
 
@@ -286,9 +317,9 @@ func (a *Auth) Logout(token string) {
 }
 
 var (
-	errInvalid   = errors.New("invalid name, role or PIN (4 to 8 digits)")
+	errInvalid   = errors.New("invalid name, level (0-9) or PIN (4 to 8 digits)")
 	errConflict  = errors.New("this name is already used")
-	errLastAdmin = errors.New("the last admin can't be removed or demoted")
+	errLastAdmin = errors.New("the last level-0 profile can't be removed or demoted")
 	errBadPIN    = errors.New("wrong PIN")
 	errLocked    = errors.New("too many wrong PINs")
 	errUnknown   = errors.New("unknown terminal, profile or Thing")

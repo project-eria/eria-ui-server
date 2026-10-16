@@ -129,7 +129,7 @@ func TestChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth.Bootstrap("1234")
-	guest, _ := auth.CreateProfile("Invité", RoleGuest, "0000")
+	guest, _ := auth.CreateProfile("Invité", 9, "0000")
 
 	registry := NewRegistry(nil)
 	td := TD{
@@ -264,7 +264,7 @@ func TestChannel(t *testing.T) {
 	if r := g.call("adminProfiles", nil); errType(r) != failRefused {
 		t.Errorf("guest lists profiles = %v, want refused", r)
 	}
-	if r := a.call("createProfile", map[string]any{"value": map[string]string{"name": "Lia", "role": "member", "pin": "2468"}}); r["error"] != nil {
+	if r := a.call("createProfile", map[string]any{"value": map[string]any{"name": "Lia", "level": 5, "pin": "2468"}}); r["error"] != nil {
 		t.Errorf("createProfile = %v", r)
 	}
 	if r := a.call("deleteProfile", map[string]any{"value": 1}); errType(r) != failInvalid {
@@ -287,7 +287,7 @@ func TestChannel(t *testing.T) {
 		t.Errorf("contexts = %v", r)
 	}
 
-	// Pages: a saved page is pushed to the terminal it is assigned to.
+	// Pages: every page is pushed to every terminal; its theme is fixed.
 	hasPage := func(version float64) func(map[string]any) bool {
 		return func(m map[string]any) bool {
 			pages, _ := m["pages"].([]any)
@@ -298,15 +298,20 @@ func TestChannel(t *testing.T) {
 			return ref["version"] == version
 		}
 	}
-	page := map[string]any{"title": "Entrée", "shared": true, "elements": []map[string]any{
+	page := map[string]any{"title": "Entrée", "layout": "grid", "elements": []map[string]any{
 		{"id": "e1", "type": "action", "thing": "urn:test", "name": "toggle"}}}
 	r = a.call("savePage", map[string]any{"value": page})
 	saved, _ := r["result"].(map[string]any)
 	if saved["id"] == nil {
 		t.Fatalf("savePage = %v", r)
 	}
-	a.call("configureTerminal", map[string]any{"value": map[string]any{"id": id2, "pages": []any{saved["id"]}}})
 	b.next(hasPage(1))
+	if r := g.call("savePage", map[string]any{"value": page}); errType(r) != failRefused {
+		t.Errorf("guest saves a page = %v, want refused", r)
+	}
+	if r := a.call("savePage", map[string]any{"value": map[string]any{"title": "Hex", "theme": "hex"}}); errType(r) != failInvalid {
+		t.Errorf("page in an unknown theme = %v, want invalid", r)
+	}
 	saved["title"] = "Entrée principale"
 	a.call("savePage", map[string]any{"value": saved})
 	b.next(hasPage(2))

@@ -140,21 +140,20 @@ func (s *session) readLoop(conn *websocket.Conn) {
 	}
 }
 
-// pushResources sends the resource manifest of this connection (PLAN §10):
-// the theme and aspect of the terminal, and the versions of its pages. The
-// app downloads what changed and keeps a local copy.
+// pushResources sends the resource manifest (PLAN §5.000): every page with
+// its version, and the themes they use with their archive hash. The app
+// downloads what changed and keeps a local copy.
 func (s *session) pushResources() {
-	t, err := s.ch.auth.terminal(`id = ?`, s.terminal)
-	if err != nil {
-		return // forgotten meanwhile
-	}
-	pages, err := s.ch.auth.Manifest(s.terminal, s.viewer())
+	pages, used, err := s.ch.auth.Manifest()
 	if err != nil {
 		zlog.Error().Err(err).Msg("[channel:pushResources]")
 		return
 	}
-	s.ch.hub.push(s.client, map[string]any{"push": "resources", "theme": t.Theme, "themeHash": themeHash(s.ch.themes, t.Theme),
-		"aspect": t.Aspect, "pages": pages})
+	themes := []map[string]string{}
+	for _, id := range used {
+		themes = append(themes, map[string]string{"id": id, "hash": themeHash(s.ch.themes, id)})
+	}
+	s.ch.hub.push(s.client, map[string]any{"push": "resources", "pages": pages, "themes": themes})
 }
 
 func (s *session) viewer() *Profile {
@@ -179,10 +178,16 @@ func (s *session) handle(req request) (any, *opError) {
 	// --- Session ---
 	case "profiles":
 		list, err := auth.Profiles()
-		for i := range list {
-			list[i].Role = "" // the sign-in screen only needs names
+		// The sign-in screen only needs names: levels and last sign-ins stay private.
+		type name struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
 		}
-		return list, internal(err)
+		names := make([]name, len(list))
+		for i, p := range list {
+			names[i] = name{p.ID, p.Name}
+		}
+		return names, internal(err)
 	case "login":
 		token, wait, err := auth.Login(req.Profile, req.PIN)
 		switch {
@@ -264,15 +269,18 @@ func (s *session) handle(req request) (any, *opError) {
 	case "page":
 		var id string
 		json.Unmarshal(req.Value, &id)
-		p, err := auth.Page(s.viewer(), id)
+		p, err := auth.Page(id)
 		return p, invalid(err)
 	case "pages":
-		list, err := auth.Pages(s.viewer())
+		list, err := auth.Pages()
 		return list, internal(err)
 	case "savePage":
 		var in Page
 		if json.Unmarshal(req.Value, &in) != nil {
 			return nil, fail(failInvalid, "bad page")
+		}
+		if in.ID == "" && in.Theme != "" && themeHash(s.ch.themes, in.Theme) == "" {
+			return nil, fail(failInvalid, "unknown or unreadable theme")
 		}
 		p, err := auth.SavePage(s.viewer(), in)
 		if err != nil {
@@ -314,22 +322,30 @@ func (s *session) handle(req request) (any, *opError) {
 	switch req.Op {
 	case "terminals":
 		list, err := auth.Terminals()
+		on := s.ch.hub.connected()
+		for i := range list {
+			list[i].Online = on[list[i].ID]
+		}
 		return list, internal(err)
 	case "adminProfiles":
 		list, err := auth.Profiles()
 		return list, internal(err)
 	case "createProfile":
-		var in struct{ Name, Role, PIN string }
+		var in struct {
+			Name, PIN string
+			Level     int
+		}
 		json.Unmarshal(req.Value, &in)
-		p, err := auth.CreateProfile(in.Name, in.Role, in.PIN)
+		p, err := auth.CreateProfile(in.Name, in.Level, in.PIN)
 		return p, invalid(err)
 	case "updateProfile":
 		var in struct {
-			ID              int64
-			Name, Role, PIN *string
+			ID        int64
+			Name, PIN *string
+			Level     *int
 		}
 		json.Unmarshal(req.Value, &in)
-		return true, invalid(auth.UpdateProfile(in.ID, in.Name, in.Role, in.PIN))
+		return true, invalid(auth.UpdateProfile(in.ID, in.Name, in.Level, in.PIN))
 	case "deleteProfile":
 		var id int64
 		json.Unmarshal(req.Value, &id)
@@ -373,15 +389,11 @@ func (s *session) handle(req request) (any, *opError) {
 		if json.Unmarshal(req.Value, &in) != nil {
 			return nil, fail(failInvalid, "bad terminal settings")
 		}
-		if in.Theme != nil && *in.Theme != "" && themeHash(s.ch.themes, *in.Theme) == "" {
-			return nil, fail(failInvalid, "unknown or unreadable theme")
-		}
 		t, err := auth.ConfigureTerminal(in)
 		if err != nil {
 			return nil, invalid(err)
 		}
 		s.ch.hub.broadcast(t.ID, map[string]any{"push": "terminal", "terminal": t})
-		s.ch.hub.refresh(t.ID)
 		return t, nil
 	case "forgetTerminal":
 		var id string

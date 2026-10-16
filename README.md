@@ -17,23 +17,23 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 
 | Op | Fields | Result |
 |---|---|---|
-| `profiles` | — | `[{id, name, level}]` |
+| `profiles` | — | `[{id, name}]` (sign-in screen) |
 | `login` | `profile`, `pin` | `{token, profile}`; the connection is signed in |
 | `logout` | — | `true` |
 | `reportType` | `value`: `watch` … `tv` | `true` (type deduced from the screen) |
 | `services` | — | services, each with `can {read, write, invoke}` for this connection |
 | `contexts` | — | list |
-| `page` | `value`: id | page (shared, or the profile's own) |
-| `pages` | — | pages the profile may edit (all for level 0, else its own) |
-| `savePage` | `value`: page (no `id` = new; same `version` as stored) | page |
-| `deletePage` | `value`: id | `true` |
+| `page` | `value`: id | page |
+| `pages` | — | every page |
+| `savePage` | `value`: page (no `id` = new, with a known `theme` — `""` = Base; same `version` as stored; `theme`, `aspect`, `layout` fixed after creation) | page (level 0) |
+| `deletePage` | `value`: id | `true` (level 0) |
 | `read` | `thing`, `name` | value (hidden Things: level 0 only, as for every Thing op) |
 | `write` | `thing`, `name`, `value` | `null` (signed in only) |
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
 | `observe` / `unobserve` | `thing`, `name` (property) | `true` |
 | `subscribe` / `unsubscribe` | `thing`, `name` (event) | `true` |
-| `adminProfiles` | — | profiles with their role (level 0) |
-| `createProfile` / `updateProfile` / `deleteProfile` | `value`: `{name, role, pin}` / `{id, name?, role?, pin?}` / id | profile / `true` (level 0) |
+| `adminProfiles` | — | profiles `{id, name, level, lastLogin?}` (level 0) |
+| `createProfile` / `updateProfile` / `deleteProfile` | `value`: `{name, level, pin}` / `{id, name?, level?, pin?}` / id | profile / `true` (level 0; the last level-0 profile can be neither deleted nor demoted) |
 | `things` | — | every known Thing `{id, title, url, online, hidden, manual}` (level 0) |
 | `td` | `thing` | the Thing's TD as received (level 0) |
 | `addThing` | `value`: TD URL or host (then `/.well-known/wot`) | `{id, url}`; kept and polled (level 0) |
@@ -42,24 +42,25 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `masterAction` | `name`, `value` (input object), `token` (added by the app's Rust side) | the action's output; the token is relayed, never kept (level 0) |
 | `themes` | — | signed themes of the themes folder (level 0) |
 | `theme` | `value`: id | `{archive (base64), signature}` |
-| `terminals`, `hidden` | — | lists (level 0) |
-| `configureTerminal` | `value`: `{id, name?, type?, theme?, aspect?, pages?}` | terminal (level 0) |
+| `terminals`, `hidden` | — | lists (level 0); a terminal is `{id, code, name, type, detectedType, lastSeen, online}` |
+| `configureTerminal` | `value`: `{id, name?, type?}` | terminal (level 0) |
 | `forgetTerminal` | `value`: id | `true` (level 0) |
 | `setContexts` | `value`: `[{id, label}]` | `true` (level 0) |
 | `setHidden` | `value`: glob patterns | `true` (level 0) |
 
-Pushed: `welcome {terminal, profile}` then `resources {theme, aspect, pages: [{id, version}]}`
-first (again after sign-in or out, and whenever a page or the terminal changes), then
+Pushed: `welcome {terminal, profile}` then `resources {pages: [{id, version}], themes: [{id, hash}]}`
+(every page, and the signed themes they use) first (again after sign-in or out, and whenever a
+page changes), then
 `value {thing, property, value}`,
 `event {thing, event, value}`, `online {thing, online}`, `things-changed`, `contexts-changed`,
-`terminal {terminal}` (its settings changed). Levels are provisional (admin 0, member 1,
-guest 9 = not signed in) until accounts move to `auth`.
+`terminal {terminal}` (its settings changed). Each profile has a stored level 0-9 (0 =
+administration, 5 = member, 9 = read only, as when not signed in); older role databases are
+migrated (admin → 0, member → 5, guest → 9).
 
-A page (eria-ui-app's PLAN §5.00) is `{id, title, shared, version, elements, options}`;
+A page (eria-ui-app's PLAN §5.000) is `{id, title, theme, aspect, layout, version, elements, options}`;
 an element is `{id, type, …, label?, hidden?, widget?, options?}` with `type` `service`
 (`thing`, `capability`), `property` / `action` / `event` (`thing`, `name`, action `input?`) or
-`app` (`name`). Shared pages are made by level 0 and assigned to terminals; personal pages
-follow their profile. `can` is provisional (reading for all, commands below level 9) until
+`app` (`name`). Every page is shown on every terminal; pages are made and changed by level 0 only. `can` is provisional (reading for all, commands below level 9) until
 `authz` computes it.
 
 Besides the channel, HTTP only serves the health probe (`/api/health`).
