@@ -3,6 +3,7 @@ module github.com/project-eria/eria-ui-server
 go 1.26.0
 
 require (
+	github.com/brutella/dnssd v1.2.14
 	github.com/gorilla/websocket v1.5.3
 	github.com/project-eria/eria-core v1.16.1
 	github.com/project-eria/go-wot v1.8.1
@@ -12,7 +13,6 @@ require (
 )
 
 require (
-	github.com/brutella/dnssd v1.2.14 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect

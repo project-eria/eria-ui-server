@@ -261,6 +261,15 @@ func TestChannel(t *testing.T) {
 		t.Errorf("guest lists terminals = %v, want refused", r)
 	}
 	id2 := idOfSecret(t, auth, secret2)
+	if r := g.call("adminProfiles", nil); errType(r) != failRefused {
+		t.Errorf("guest lists profiles = %v, want refused", r)
+	}
+	if r := a.call("createProfile", map[string]any{"value": map[string]string{"name": "Lia", "role": "member", "pin": "2468"}}); r["error"] != nil {
+		t.Errorf("createProfile = %v", r)
+	}
+	if r := a.call("deleteProfile", map[string]any{"value": 1}); errType(r) != failInvalid {
+		t.Errorf("delete last admin = %v, want invalid", r)
+	}
 	if r := a.call("configureTerminal", map[string]any{"value": map[string]any{"id": id2, "name": "Entrée", "type": "wall-tablet"}}); r["error"] != nil {
 		t.Fatalf("configure = %v", r)
 	}

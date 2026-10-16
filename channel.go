@@ -298,6 +298,25 @@ func (s *session) handle(req request) (any, *opError) {
 	case "terminals":
 		list, err := auth.Terminals()
 		return list, internal(err)
+	case "adminProfiles":
+		list, err := auth.Profiles()
+		return list, internal(err)
+	case "createProfile":
+		var in struct{ Name, Role, PIN string }
+		json.Unmarshal(req.Value, &in)
+		p, err := auth.CreateProfile(in.Name, in.Role, in.PIN)
+		return p, invalid(err)
+	case "updateProfile":
+		var in struct {
+			ID              int64
+			Name, Role, PIN *string
+		}
+		json.Unmarshal(req.Value, &in)
+		return true, invalid(auth.UpdateProfile(in.ID, in.Name, in.Role, in.PIN))
+	case "deleteProfile":
+		var id int64
+		json.Unmarshal(req.Value, &id)
+		return true, invalid(auth.DeleteProfile(id))
 	case "configureTerminal":
 		var in TerminalChange
 		if json.Unmarshal(req.Value, &in) != nil {

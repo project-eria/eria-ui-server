@@ -81,6 +81,7 @@ func main() {
 
 	hub := NewHub(registry)
 	go hub.WatchStatus(ctx)
+	go announce(ctx, int(config.Port))
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),

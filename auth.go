@@ -14,7 +14,6 @@ import (
 	"math"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -335,7 +334,7 @@ var (
 // --- HTTP ---
 
 // Protect guards the remaining HTTP routes (/api, except the health probe):
-// a session token is required, and profiles are managed by admins. The app
+// a session token is required. The app
 // sends its token in the Authorization header: no cookie, hence no CSRF.
 func (a *Auth) Protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,9 +347,6 @@ func (a *Auth) Protect(next http.Handler) http.Handler {
 		switch {
 		case !ok:
 			http.Error(w, "not signed in", http.StatusUnauthorized)
-			return
-		case strings.HasPrefix(path, "/api/profiles") && p.Role != RoleAdmin:
-			http.Error(w, "not allowed for this profile", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
@@ -380,63 +376,4 @@ func (a *Auth) Routes(mux *http.ServeMux) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-
-	// Profile management (admin only, enforced by Protect).
-	mux.HandleFunc("GET /api/profiles", func(w http.ResponseWriter, r *http.Request) {
-		list, err := a.Profiles()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, list)
-	})
-
-	mux.HandleFunc("POST /api/profiles", func(w http.ResponseWriter, r *http.Request) {
-		var in struct{ Name, Role, PIN string }
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		p, err := a.CreateProfile(in.Name, in.Role, in.PIN)
-		if err != nil {
-			httpError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, p)
-	})
-
-	mux.HandleFunc("PUT /api/profiles/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		var in struct{ Name, Role, PIN *string }
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		if err := a.UpdateProfile(id, in.Name, in.Role, in.PIN); err != nil {
-			httpError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	mux.HandleFunc("DELETE /api/profiles/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err := a.DeleteProfile(id); err != nil {
-			httpError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-}
-
-func httpError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errInvalid):
-		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, errConflict), errors.Is(err, errLastAdmin):
-		http.Error(w, err.Error(), http.StatusConflict)
-	default:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }
