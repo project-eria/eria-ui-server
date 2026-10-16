@@ -38,6 +38,8 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `td` | `thing` | the Thing's TD as received (level 0) |
 | `addThing` | `value`: TD URL or host (then `/.well-known/wot`) | `{id, url}`; kept and polled (level 0) |
 | `forgetThing` | `thing` | `true`, for a Thing added by address (level 0) |
+| `master` | — | `{id, found, online}` of the eria-manager master (`master:` in config) (level 0) |
+| `masterAction` | `name`, `value` (input object), `token` (added by the app's Rust side) | the action's output; the token is relayed, never kept (level 0) |
 | `themes` | — | signed themes of the themes folder (level 0) |
 | `theme` | `value`: id | `{archive (base64), signature}` |
 | `terminals`, `hidden` | — | lists (level 0) |
