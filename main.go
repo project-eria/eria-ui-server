@@ -28,6 +28,8 @@ var config = struct {
 	// First admin's PIN, used only while there is no profile. The orchestrator's
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
+	// Signed theme archives (env ERIA_UI_SERVER_THEMES overrides it).
+	Themes string `yaml:"themes" default:"themes"`
 	// First values only, copied to the database at the first start; then
 	// edited by the admin (PLAN §10).
 	Hide     []string  `yaml:"hide,omitempty"`     // glob patterns on TD ids, see config.sample.yml
@@ -65,6 +67,10 @@ func main() {
 		zlog.Fatal().Err(err).Msg("[main] Can't read the hidden Things")
 	}
 
+	if dir := os.Getenv("ERIA_UI_SERVER_THEMES"); dir != "" {
+		config.Themes = dir
+	}
+
 	registry := NewRegistry(hidden)
 	ctx, stop := context.WithCancel(context.Background())
 	go func() {
@@ -79,7 +85,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry}),
+		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes}),
 	}
 	go func() {
 		zlog.Info().Str("addr", server.Addr).Msg("[main] Listening")

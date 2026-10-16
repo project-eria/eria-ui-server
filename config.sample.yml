@@ -21,3 +21,5 @@ contexts:
 database: eria-ui-server.db
 # First admin's PIN, used only while there is no profile (or env ERIA_UI_SERVER_ADMIN_PIN)
 # adminPin: "<4 to 8 digits>"
+# Signed theme archives: <id>.tar + <id>.tar.sig (env ERIA_UI_SERVER_THEMES overrides it)
+themes: themes

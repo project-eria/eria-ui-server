@@ -9,7 +9,8 @@ exec:
   args: ["--config-path", "{config}"]
   # Profiles, sessions and screens: kept in the agent's data folder across reinstalls.
   # Stateful app: pin it to one node when deploying.
-  env: ["ERIA_UI_SERVER_DATABASE={data}/eria-ui-server.db"]
+  # Themes: drop signed archives (<id>.tar + .sig) in {data}/themes on the node.
+  env: ["ERIA_UI_SERVER_DATABASE={data}/eria-ui-server.db", "ERIA_UI_SERVER_THEMES={data}/themes"]
   health: { url: "http://127.0.0.1:{port}/api/health", grace: 20s, interval: 10s }
 
 config: |

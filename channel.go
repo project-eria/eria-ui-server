@@ -67,6 +67,7 @@ type Channel struct {
 	hub      *Hub
 	auth     *Auth
 	registry *Registry
+	themes   string // folder of the signed theme archives
 }
 
 // session is the state of one connection.
@@ -149,7 +150,8 @@ func (s *session) pushResources() {
 		zlog.Error().Err(err).Msg("[channel:pushResources]")
 		return
 	}
-	s.ch.hub.push(s.client, map[string]any{"push": "resources", "theme": t.Theme, "aspect": t.Aspect, "pages": pages})
+	s.ch.hub.push(s.client, map[string]any{"push": "resources", "theme": t.Theme, "themeHash": themeHash(s.ch.themes, t.Theme),
+		"aspect": t.Aspect, "pages": pages})
 }
 
 func (s *session) viewer() *Profile {
@@ -246,6 +248,13 @@ func (s *session) handle(req request) (any, *opError) {
 		}
 		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value)
 
+	// --- Themes (signed: the app checks them, the server only serves them) ---
+	case "theme":
+		var id string
+		json.Unmarshal(req.Value, &id)
+		archive, err := themeArchive(s.ch.themes, id)
+		return archive, invalid(err)
+
 	// --- Pages ---
 	case "page":
 		var id string
@@ -317,10 +326,15 @@ func (s *session) handle(req request) (any, *opError) {
 		var id int64
 		json.Unmarshal(req.Value, &id)
 		return true, invalid(auth.DeleteProfile(id))
+	case "themes":
+		return Themes(s.ch.themes), nil
 	case "configureTerminal":
 		var in TerminalChange
 		if json.Unmarshal(req.Value, &in) != nil {
 			return nil, fail(failInvalid, "bad terminal settings")
+		}
+		if in.Theme != nil && *in.Theme != "" && themeHash(s.ch.themes, *in.Theme) == "" {
+			return nil, fail(failInvalid, "unknown or unreadable theme")
 		}
 		t, err := auth.ConfigureTerminal(in)
 		if err != nil {

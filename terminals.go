@@ -129,8 +129,8 @@ func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
 	if in.Type != nil && *in.Type != "" && !slices.Contains(terminalTypes, *in.Type) {
 		return Terminal{}, errInvalid
 	}
-	// ponytail: theme and aspect are stored as given; they are checked
-	// against the installed themes once those exist (lot 18).
+	// ponytail: the aspect is stored as given; an unknown one shows the
+	// theme's first aspect.
 	set := map[string]any{}
 	if in.Name != nil {
 		set["name"] = strings.TrimSpace(*in.Name)
