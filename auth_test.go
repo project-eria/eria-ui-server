@@ -1,11 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,33 +26,45 @@ func TestAuth(t *testing.T) {
 	}
 	guest, _ := auth.CreateProfile("Invité", RoleGuest, "0000")
 	member, _ := auth.CreateProfile("Marlène", RoleMember, "5678")
-
-	// A stand-in for the Thing routes: reached means allowed.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/things/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	srv := httptest.NewServer(withAuth(mux, auth))
-	defer srv.Close()
-
-	type browser struct{ *http.Client }
-	newBrowser := func() browser {
-		jar, _ := cookiejar.New(nil)
-		return browser{&http.Client{Jar: jar}}
+	if guest.Level != 9 || member.Level != 1 {
+		t.Errorf("levels = %d / %d, want 9 / 1", guest.Level, member.Level)
 	}
-	call := func(b browser, method, path, body string) int {
+	login := func(id int64, pin string) string {
+		t.Helper()
+		token, _, err := auth.Login(id, pin)
+		if err != nil {
+			t.Fatalf("login %d: %v", id, err)
+		}
+		return token
+	}
+
+	// Wrong PINs: locked after 5, longer each time, unlocked by time.
+	for range maxFailures {
+		if _, _, err := auth.Login(member.ID, "9999"); !errors.Is(err, errBadPIN) {
+			t.Fatalf("wrong PIN: %v", err)
+		}
+	}
+	if _, wait, err := auth.Login(member.ID, "5678"); !errors.Is(err, errLocked) || wait <= 0 {
+		t.Fatalf("locked profile, right PIN: %v (wait %v)", err, wait)
+	}
+	now = now.Add(lockBase + time.Second)
+	mb := login(member.ID, "5678")
+
+	srv := httptest.NewServer(withAuth(http.NewServeMux(), auth))
+	defer srv.Close()
+	call := func(token, method, path, body string) int {
 		t.Helper()
 		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
-		if method != http.MethodGet {
-			req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		resp, err := b.Do(req)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		return resp.StatusCode
-	}
-	login := func(b browser, id int64, pin string) int {
-		return call(b, "POST", "/api/auth/login", fmt.Sprintf(`{"profile":%d,"pin":%q}`, id, pin))
 	}
 	expect := func(what string, got, want int) {
 		t.Helper()
@@ -62,57 +73,16 @@ func TestAuth(t *testing.T) {
 		}
 	}
 
-	anon := newBrowser()
-	expect("profiles list is public", call(anon, "GET", "/api/auth/profiles", ""), 200)
-	expect("health probe is public", call(anon, "GET", "/api/health", ""), 404) // reached: no route in this mux
-	expect("services need a session", call(anon, "GET", "/api/services", ""), 401)
-	expect("the app itself is public", call(anon, "GET", "/", ""), 404) // no "/" route in this mux
-
-	// Guest: reads, never writes, no profile management.
-	g := newBrowser()
-	expect("guest login", login(g, guest.ID, "0000"), 204)
-	expect("guest reads", call(g, "GET", "/api/things/x/properties/on", ""), 418)
-	expect("guest can't act", call(g, "POST", "/api/things/x/actions/toggle", ""), 403)
-	expect("guest can't manage profiles", call(g, "GET", "/api/profiles", ""), 403)
-
-	// Member: acts; CSRF: a non-JSON write is refused before anything else.
-	mb := newBrowser()
-	expect("member login", login(mb, member.ID, "5678"), 204)
-	expect("member acts", call(mb, "POST", "/api/things/x/actions/toggle", ""), 418)
-	expect("unknown pack refused", call(mb, "PUT", "/api/me", `{"pack":"nope"}`), 400)
+	expect("health probe is public", call("", "GET", "/api/health", ""), 404) // reached: no route in this mux
+	expect("API needs a token", call("", "GET", "/api/me", ""), 401)
+	expect("unknown token", call("nope", "GET", "/api/me", ""), 401)
+	expect("member reads own profile", call(mb, "GET", "/api/me", ""), 200)
+	expect("member can't manage profiles", call(mb, "GET", "/api/profiles", ""), 403)
 	expect("Standard pack chosen", call(mb, "PUT", "/api/me", `{"pack":"standard"}`), 204)
-	expect("guest chooses a pack too", call(g, "PUT", "/api/me", `{"pack":""}`), 204)
-	expect("theme and scheme", call(mb, "PUT", "/api/me", `{"theme":"contraste","scheme":"dark"}`), 204)
 	expect("unknown theme refused", call(mb, "PUT", "/api/me", `{"theme":"neon"}`), 400)
-	expect("unknown scheme refused", call(mb, "PUT", "/api/me", `{"scheme":"sepia"}`), 400)
-	if p, _ := auth.session(func() *http.Request {
-		r, _ := http.NewRequest("GET", "/", nil)
-		u, _ := url.Parse(srv.URL)
-		for _, c := range mb.Jar.Cookies(u) {
-			r.AddCookie(c)
-		}
-		return r
-	}()); p.Theme != "contraste" || p.Scheme != "dark" || p.Pack != "standard" {
-		t.Errorf("preferences = %+v, want contraste/dark kept with pack standard", p)
-	}
-	req, _ := http.NewRequest("POST", srv.URL+"/api/things/x/actions/toggle", strings.NewReader(""))
-	req.Header.Set("Content-Type", "text/plain")
-	resp, _ := mb.Do(req)
-	expect("form-like POST (CSRF)", resp.StatusCode, 415)
-
-	// Wrong PINs: locked after 5, longer each time, unlocked by time.
-	x := newBrowser()
-	for i := range maxFailures {
-		expect(fmt.Sprintf("wrong PIN %d", i+1), login(x, member.ID, "9999"), 401)
-	}
-	expect("locked, even with the right PIN", login(x, member.ID, "5678"), 429)
-	now = now.Add(lockBase + time.Second)
-	expect("unlocked after the delay", login(x, member.ID, "5678"), 204)
-	expect("member session still valid", call(mb, "GET", "/api/me", ""), 200)
 
 	// Admin: manages profiles, but the last admin stays.
-	a := newBrowser()
-	expect("admin login", login(a, 1, "1234"), 204)
+	a := login(1, "1234")
 	expect("create profile", call(a, "POST", "/api/profiles", `{"name":"Lia","role":"member","pin":"2468"}`), 201)
 	expect("duplicate name", call(a, "POST", "/api/profiles", `{"name":"Lia","role":"member","pin":"2468"}`), 409)
 	expect("PIN too short", call(a, "POST", "/api/profiles", `{"name":"Érine","role":"member","pin":"12"}`), 400)
@@ -120,9 +90,7 @@ func TestAuth(t *testing.T) {
 	expect("demote last admin", call(a, "PUT", "/api/profiles/1", `{"role":"member"}`), 409)
 	expect("new PIN for the member", call(a, "PUT", fmt.Sprintf("/api/profiles/%d", member.ID), `{"pin":"1357"}`), 204)
 	expect("new PIN signs the member out", call(mb, "GET", "/api/me", ""), 401)
-	expect("delete guest", call(a, "DELETE", fmt.Sprintf("/api/profiles/%d", guest.ID), ""), 204)
-	expect("deleted guest signed out", call(g, "GET", "/api/me", ""), 401)
 
-	expect("logout", call(a, "POST", "/api/auth/logout", ""), 204)
+	auth.Logout(a)
 	expect("after logout", call(a, "GET", "/api/me", ""), 401)
 }

@@ -73,18 +73,30 @@ func (r *Registry) seen(url string) {
 		zlog.Warn().Err(err).Str("url", url).Msg("[registry:seen] can't read TD")
 		return
 	}
-	if r.hidden(td.ID) {
-		return
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.hiddenLocked(td.ID) {
+		return
+	}
 	if _, known := r.things[td.ID]; !known {
 		zlog.Info().Str("id", td.ID).Str("url", url).Msg("[registry:seen] new Thing")
 	}
 	r.things[td.ID] = &thingEntry{td: td, url: url, fetched: now, seen: now}
 }
 
-func (r *Registry) hidden(id string) bool {
+// SetHide replaces the hidden patterns and forgets the Things they now match.
+func (r *Registry) SetHide(patterns []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hide = patterns
+	for id := range r.things {
+		if r.hiddenLocked(id) {
+			delete(r.things, id)
+		}
+	}
+}
+
+func (r *Registry) hiddenLocked(id string) bool {
 	for _, pattern := range r.hide {
 		if ok, _ := path.Match(pattern, id); ok {
 			return true

@@ -1,5 +1,6 @@
-port: 8090 # HTTP port of the UI and its API
+port: 8090 # HTTP port of the API and the app's WebSocket
 location: Europe/Paris # required by eria-core (timezone)
+# First values only, copied to the database at the first start, then edited by the admin.
 # Things never shown to the user (glob on TD id): apps, agents, orchestrator
 hide:
   - "urn:eria:app:controler:*"

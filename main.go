@@ -4,11 +4,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 
@@ -31,12 +29,14 @@ var config = struct {
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
 	// Widget packs folder (env ERIA_UI_SERVER_PACKS overrides it), see PACKS.md.
-	Packs    string    `yaml:"packs" default:"packs"`
+	Packs string `yaml:"packs" default:"packs"`
+	// First values only, copied to the database at the first start; then
+	// edited by the admin (PLAN §10).
 	Hide     []string  `yaml:"hide,omitempty"`     // glob patterns on TD ids, see config.sample.yml
 	Contexts []Context `yaml:"contexts,omitempty"` // contexts offered to people, in display order
 }{}
 
-// maxBody bounds the JSON values a browser may send to a Thing.
+// maxBody bounds the JSON values exchanged with a Thing.
 const maxBody = 64 << 10
 
 func main() {
@@ -63,8 +63,15 @@ func main() {
 	if err := auth.Bootstrap(pin); err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Can't create the first profile")
 	}
+	if err := auth.SeedSettings(config.Contexts, config.Hide); err != nil {
+		zlog.Fatal().Err(err).Msg("[main] Can't store the first settings")
+	}
+	hidden, err := auth.Hidden()
+	if err != nil {
+		zlog.Fatal().Err(err).Msg("[main] Can't read the hidden Things")
+	}
 
-	registry := NewRegistry(config.Hide)
+	registry := NewRegistry(hidden)
 	ctx, stop := context.WithCancel(context.Background())
 	go func() {
 		if err := registry.Discover(ctx); err != nil {
@@ -77,7 +84,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: withAuth(newMux(registry, hub), auth),
+		Handler: withAuth(newMux(&Channel{hub: hub, auth: auth, registry: registry}), auth),
 	}
 	go func() {
 		zlog.Info().Str("addr", server.Addr).Msg("[main] Listening")
@@ -98,120 +105,17 @@ func withAuth(mux *http.ServeMux, auth *Auth) http.Handler {
 	return auth.Protect(mux)
 }
 
-func newMux(registry *Registry, hub *Hub) *http.ServeMux {
+func newMux(ch *Channel) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /api/ws", hub.ServeWS)
+	// Everything the app does with the Things goes through this WebSocket.
+	mux.HandleFunc("GET /api/ws", ch.ServeWS)
 
 	// Health probe of the orchestrator's agent (public, see eria-app.yml).
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-
-	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, registry.Services())
-	})
-
-	mux.HandleFunc("GET /api/contexts", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, append([]Context{}, config.Contexts...)) // never null
-	})
-
-	// Property and action names may contain "/" (e.g. astral "today/sunrise").
-	mux.HandleFunc("GET /api/things/{id}/properties/{name...}", func(w http.ResponseWriter, r *http.Request) {
-		_, p, ok := lookupProperty(w, r, registry)
-		if ok {
-			forward(w, http.MethodGet, href(p.Forms, "readproperty"), nil)
-		}
-	})
-
-	mux.HandleFunc("PUT /api/things/{id}/properties/{name...}", func(w http.ResponseWriter, r *http.Request) {
-		td, p, ok := lookupProperty(w, r, registry)
-		if !ok {
-			return
-		}
-		if !isWritable(td, r.PathValue("name")) {
-			http.Error(w, "read-only property", http.StatusForbidden)
-			return
-		}
-		body, ok := readJSON(w, r)
-		if ok {
-			forward(w, http.MethodPut, href(p.Forms, "writeproperty"), body)
-		}
-	})
-
-	mux.HandleFunc("POST /api/things/{id}/actions/{name...}", func(w http.ResponseWriter, r *http.Request) {
-		td, found := registry.Thing(r.PathValue("id"))
-		a, exists := td.Actions[r.PathValue("name")]
-		if !found || !exists {
-			http.NotFound(w, r)
-			return
-		}
-		body, ok := readJSON(w, r)
-		if ok {
-			forward(w, http.MethodPost, href(a.Forms, "invokeaction"), body)
-		}
-	})
-
 	return mux
-}
-
-func lookupProperty(w http.ResponseWriter, r *http.Request, registry *Registry) (TD, Property, bool) {
-	td, found := registry.Thing(r.PathValue("id"))
-	p, exists := td.Properties[r.PathValue("name")]
-	if !found || !exists {
-		http.NotFound(w, r)
-		return td, p, false
-	}
-	// ponytail: properties with uriVariables (contexts isActive/{context})
-	// aren't proxied; the "actives" array covers them for now.
-	if len(p.UriVariables) > 0 {
-		http.Error(w, "uriVariables not supported", http.StatusNotImplemented)
-		return td, p, false
-	}
-	return td, p, true
-}
-
-// readJSON reads a bounded, valid JSON body (empty allowed for actions).
-func readJSON(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	if err != nil {
-		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
-		return nil, false
-	}
-	if len(bytes.TrimSpace(body)) > 0 && !json.Valid(body) {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return nil, false
-	}
-	return body, true
-}
-
-// forward is the single path from the UI to the Things: the place where the
-// user's token will be added once an authorization service exists.
-func forward(w http.ResponseWriter, method, url string, body []byte) {
-	if url == "" {
-		http.Error(w, "no HTTP form for this operation", http.StatusNotImplemented)
-		return
-	}
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if method != http.MethodGet {
-		req.Header.Set("Content-Type", "application/json") // required by go-wot
-	}
-	resp, err := upstream.Do(req)
-	if err != nil {
-		zlog.Warn().Err(err).Str("url", url).Msg("[main:forward] Thing unreachable")
-		http.Error(w, "Thing unreachable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

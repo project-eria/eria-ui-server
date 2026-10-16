@@ -31,8 +31,14 @@ const (
 	RoleGuest  = "guest"  // read only
 )
 
+// levels maps the provisional roles to auth levels 0-9 (AUTH-DESIGN §2.1:
+// lower = more rights, 9 = guest or not signed in), until accounts move to auth.
+var levels = map[string]int{RoleAdmin: 0, RoleMember: 1, RoleGuest: 9}
+
+// notSignedIn is the level of a terminal nobody is signed in on.
+const notSignedIn = 9
+
 const (
-	sessionCookie   = "eria_session"
 	sessionDuration = 30 * 24 * time.Hour
 	// PINs are short: after maxFailures wrong PINs a profile is locked,
 	// first for lockBase, then twice as long at each new failure (max lockMax).
@@ -47,6 +53,7 @@ type Profile struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Role   string `json:"role,omitempty"`
+	Level  int    `json:"level"`
 	Pack   string `json:"pack,omitempty"`   // widget pack chosen by the profile, "" = Standard
 	Theme  string `json:"theme,omitempty"`  // theme, "" = Ardoise
 	Scheme string `json:"scheme,omitempty"` // auto | light | dark, "" = auto
@@ -85,8 +92,10 @@ func OpenAuth(path string) (*Auth, error) {
 		return nil, err
 	}
 	a := &Auth{db: db, now: time.Now, PacksDir: "packs"}
-	if err := a.migrateScreens(); err != nil {
-		return nil, err
+	for _, migrate := range []func() error{a.migrateScreens, a.migrateTerminals, a.migrateSettings} {
+		if err := migrate(); err != nil {
+			return nil, err
+		}
 	}
 	// Columns added after the first release: older databases get them here.
 	for _, c := range []struct{ table, column string }{
@@ -171,7 +180,7 @@ func (a *Auth) CreateProfile(name, role, pin string) (Profile, error) {
 		return Profile{}, errConflict // name already taken
 	}
 	id, _ := res.LastInsertId()
-	return Profile{ID: id, Name: name, Role: role}, nil
+	return Profile{ID: id, Name: name, Role: role, Level: levels[role]}, nil
 }
 
 func (a *Auth) Profiles() ([]Profile, error) {
@@ -186,6 +195,7 @@ func (a *Auth) Profiles() ([]Profile, error) {
 		if err := rows.Scan(&p.ID, &p.Name, &p.Role); err != nil {
 			return nil, err
 		}
+		p.Level = levels[p.Role]
 		list = append(list, p)
 	}
 	return list, rows.Err()
@@ -291,15 +301,23 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (a *Auth) session(r *http.Request) (Profile, bool) {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil {
-		return Profile{}, false
-	}
+// Session returns the profile signed in with this token.
+func (a *Auth) Session(token string) (Profile, bool) {
 	var p Profile
-	err = a.db.QueryRow(`SELECT p.id, p.name, p.role, p.pack, p.theme, p.scheme FROM sessions s JOIN profiles p ON p.id = s.profile_id
-		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(c.Value), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Role, &p.Pack, &p.Theme, &p.Scheme)
+	err := a.db.QueryRow(`SELECT p.id, p.name, p.role, p.pack, p.theme, p.scheme FROM sessions s JOIN profiles p ON p.id = s.profile_id
+		WHERE s.token_hash = ? AND s.expires > ?`, tokenHash(token), a.now().Unix()).Scan(&p.ID, &p.Name, &p.Role, &p.Pack, &p.Theme, &p.Scheme)
+	p.Level = levels[p.Role]
 	return p, err == nil
+}
+
+func (a *Auth) Logout(token string) {
+	a.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash(token))
+}
+
+// bearer returns the session token sent by the app (Authorization header).
+func bearer(r *http.Request) string {
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return token
 }
 
 func profileFrom(ctx context.Context) Profile {
@@ -313,37 +331,27 @@ var (
 	errLastAdmin = errors.New("the last admin can't be removed or demoted")
 	errBadPIN    = errors.New("wrong PIN")
 	errLocked    = errors.New("too many wrong PINs")
+	errUnknown   = errors.New("unknown terminal, profile or Thing")
 )
 
 // --- HTTP ---
 
-// Protect guards every /api route: a session is required except to list the
-// profiles and log in; guests only read; profiles are managed by admins.
-// Mutations must be JSON: browsers can't send that cross-site without a CORS
-// preflight we never grant, which, with SameSite=Strict, blocks CSRF.
+// Protect guards the remaining HTTP routes (/api, except the health probe):
+// a session token is required, and profiles are managed by admins. The app
+// sends its token in the Authorization header: no cookie, hence no CSRF.
 func (a *Auth) Protect(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if !strings.HasPrefix(path, "/api/") {
-			next.ServeHTTP(w, r) // the app itself
+		if !strings.HasPrefix(path, "/api/") || path == "/api/health" || path == "/api/ws" {
+			next.ServeHTTP(w, r) // the channel checks its own connections
 			return
 		}
-		write := r.Method != http.MethodGet && r.Method != http.MethodHead
-		if write && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			http.Error(w, "JSON expected", http.StatusUnsupportedMediaType)
-			return
-		}
-		if path == "/api/auth/profiles" || path == "/api/auth/login" || path == "/api/health" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		p, ok := a.session(r)
+		p, ok := a.Session(bearer(r))
 		switch {
 		case !ok:
 			http.Error(w, "not signed in", http.StatusUnauthorized)
 			return
-		case strings.HasPrefix(path, "/api/profiles") && p.Role != RoleAdmin,
-			strings.HasPrefix(path, "/api/things/") && write && p.Role == RoleGuest:
+		case strings.HasPrefix(path, "/api/profiles") && p.Role != RoleAdmin:
 			http.Error(w, "not allowed for this profile", http.StatusForbidden)
 			return
 		}
@@ -352,52 +360,6 @@ func (a *Auth) Protect(next http.Handler) http.Handler {
 }
 
 func (a *Auth) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/auth/profiles", func(w http.ResponseWriter, r *http.Request) {
-		list, err := a.Profiles()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for i := range list {
-			list[i].Role = "" // the login screen only needs names
-		}
-		writeJSON(w, list)
-	})
-
-	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Profile int64  `json:"profile"`
-			PIN     string `json:"pin"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&in); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-		token, wait, err := a.Login(in.Profile, in.PIN)
-		switch {
-		case errors.Is(err, errLocked):
-			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-			http.Error(w, err.Error(), http.StatusTooManyRequests)
-		case err != nil:
-			http.Error(w, errBadPIN.Error(), http.StatusUnauthorized)
-		default:
-			http.SetCookie(w, &http.Cookie{
-				Name: sessionCookie, Value: token, Path: "/",
-				MaxAge: int(sessionDuration.Seconds()), HttpOnly: true,
-				SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
-			})
-			w.WriteHeader(http.StatusNoContent)
-		}
-	})
-
-	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
-		if c, err := r.Cookie(sessionCookie); err == nil {
-			a.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash(c.Value))
-		}
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-		w.WriteHeader(http.StatusNoContent)
-	})
-
 	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, profileFrom(r.Context()))
 	})

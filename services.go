@@ -17,6 +17,7 @@ type TD struct {
 	Types       any                 `json:"@type"` // string or []string
 	Properties  map[string]Property `json:"properties"`
 	Actions     map[string]Action   `json:"actions"`
+	Events      map[string]Event    `json:"events"`
 }
 
 type Form struct {
@@ -43,6 +44,12 @@ type Action struct {
 	Forms []Form          `json:"forms,omitempty"`
 }
 
+type Event struct {
+	Title string          `json:"title,omitempty"`
+	Data  json.RawMessage `json:"data,omitempty"`
+	Forms []Form          `json:"forms,omitempty"`
+}
+
 // Service is what the UI displays: one capability of one Thing.
 type Service struct {
 	ID         string              `json:"id"` // <thing id>#<capability>
@@ -52,6 +59,7 @@ type Service struct {
 	Online     bool                `json:"online"`
 	Properties map[string]Property `json:"properties"`
 	Actions    map[string]Action   `json:"actions"`
+	Events     map[string]Event    `json:"events,omitempty"`
 }
 
 const genericCapability = "generic"
@@ -175,7 +183,7 @@ func buildServices(td TD, online bool) []Service {
 	newService := func(capa string) Service {
 		return Service{
 			ID: td.ID + "#" + capa, Thing: td.ID, Capability: capa, Label: label(td), Online: online,
-			Properties: map[string]Property{}, Actions: map[string]Action{},
+			Properties: map[string]Property{}, Actions: map[string]Action{}, Events: map[string]Event{},
 		}
 	}
 	used := map[string]bool{}
@@ -212,7 +220,12 @@ func buildServices(td TD, online bool) []Service {
 			rest.Actions[name] = a
 		}
 	}
-	if len(rest.Properties)+len(rest.Actions) > 0 {
+	// ponytail: no capability declares events yet: all go to the generic service.
+	for name, e := range td.Events {
+		e.Forms = nil
+		rest.Events[name] = e
+	}
+	if len(rest.Properties)+len(rest.Actions)+len(rest.Events) > 0 {
 		services = append(services, rest)
 	}
 	return services
@@ -240,7 +253,7 @@ func isWritable(td TD, name string) bool {
 // WebSocket form for observations, the HTTP one for everything else.
 func href(forms []Form, op string) string {
 	scheme := "http"
-	if op == "observeproperty" {
+	if op == "observeproperty" || op == "subscribeevent" {
 		scheme = "ws"
 	}
 	for _, f := range forms {
