@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -27,8 +28,9 @@ func writeTheme(t *testing.T, dir, name string, files map[string]string, signed 
 func TestThemes(t *testing.T) {
 	dir := t.TempDir()
 	writeTheme(t, dir, "minimal", map[string]string{
-		"theme.json": `{"id":"minimal","name":"Minimal","version":"0.1.0","aspects":[{"id":"clair","name":"Clair"}]}`,
-		"index.js":   "export {};",
+		"theme.json": `{"id":"minimal","name":"Minimal","version":"0.1.0","aspects":[{"id":"clair","name":"Clair"}],
+			"pages":[{"tag":"minimal-page"},{"tag":"minimal-wall","layout":"main"},{"tag":"minimal-phone","layout":"main"}]}`,
+		"index.js": "export {};",
 	}, true)
 	writeTheme(t, dir, "nosig", map[string]string{"theme.json": `{"id":"nosig"}`}, false)
 	writeTheme(t, dir, "renamed", map[string]string{"theme.json": `{"id":"other"}`}, true)
@@ -37,7 +39,8 @@ func TestThemes(t *testing.T) {
 	for _, th := range Themes(dir) {
 		byID[th.ID] = th
 	}
-	if m := byID["minimal"]; m.Error != "" || m.Name != "Minimal" || len(m.Aspects) != 1 || m.Hash == "" || m.Report {
+	if m := byID["minimal"]; m.Error != "" || m.Name != "Minimal" || len(m.Aspects) != 1 || m.Hash == "" || m.Report ||
+		!slices.Equal(m.Layouts, []string{"minimal-page", "main"}) {
 		t.Errorf("minimal = %+v", m)
 	}
 	if byID["nosig"].Error == "" || byID["renamed"].Error == "" {

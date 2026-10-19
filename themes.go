@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -25,7 +26,8 @@ type Theme struct {
 	Version string        `json:"version"` // from theme.json
 	Hash    string        `json:"hash"`    // of the archive: the app re-downloads when it changes
 	Aspects []ThemeAspect `json:"aspects"`
-	Report  bool          `json:"report"` // ships a REPORT.md (else "unverified")
+	Layouts []string      `json:"layouts"` // offered when a page is created (theme.json pages: layout, else tag)
+	Report  bool          `json:"report"`  // ships a REPORT.md (else "unverified")
 	Error   string        `json:"error,omitempty"`
 }
 
@@ -71,6 +73,7 @@ func readTheme(dir, id string) (Theme, error) {
 	var manifest struct {
 		ID, Name, Version string
 		Aspects           []ThemeAspect
+		Pages             []struct{ Tag, Layout string }
 	}
 	report := false
 	r := tar.NewReader(bytes.NewReader(archive))
@@ -94,9 +97,19 @@ func readTheme(dir, id string) (Theme, error) {
 	if manifest.ID != id {
 		return Theme{}, errors.New("theme.json id differs from the archive name")
 	}
+	layouts := []string{}
+	for _, p := range manifest.Pages {
+		l := p.Layout
+		if l == "" {
+			l = p.Tag
+		}
+		if l != "" && !slices.Contains(layouts, l) {
+			layouts = append(layouts, l)
+		}
+	}
 	sum := sha256.Sum256(archive)
 	return Theme{ID: id, Name: manifest.Name, Version: manifest.Version, Hash: hex.EncodeToString(sum[:8]),
-		Aspects: manifest.Aspects, Report: report}, nil
+		Aspects: manifest.Aspects, Layouts: layouts, Report: report}, nil
 }
 
 // themeArchive returns a theme's archive and signature, for the app to check.
