@@ -30,6 +30,8 @@ var config = struct {
 	AdminPin string `yaml:"adminPin,omitempty"`
 	// TD id of the eria-manager master, relayed for the admin console.
 	Master string `yaml:"master" default:"urn:eria:manager:1"`
+	// TD id of service-notices, whose notifications are given to the apps.
+	Notices string `yaml:"notices" default:"urn:eria:service:notices"`
 	// Signed theme archives (env ERIA_UI_SERVER_THEMES overrides it).
 	Themes string `yaml:"themes" default:"themes"`
 	// First values only, copied to the database at the first start; then
@@ -84,11 +86,12 @@ func main() {
 	go registry.Poll(ctx, auth.ManualURLs)
 	hub := NewHub(registry)
 	go hub.WatchStatus(ctx)
+	go hub.watchNotices(ctx, config.Notices)
 	go announce(ctx, int(config.Port))
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, master: config.Master}),
+		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, master: config.Master, noticesThing: config.Notices}),
 	}
 	go func() {
 		zlog.Info().Str("addr", server.Addr).Msg("[main] Listening")

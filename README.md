@@ -30,6 +30,8 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `read` | `thing`, `name` | value (hidden Things: level 0 only, as for every Thing op) |
 | `write` | `thing`, `name`, `value` | `null` (signed in only) |
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
+| `notices` | — | notices of service-notices (`notices:` in config) this connection may see, newest first, each with `read` (`audience: profile` ones for a signed-in person only); `[]` without the service |
+| `markRead` | `value`: notice ids | `true` (signed in only) |
 | `observe` / `unobserve` | `thing`, `name` (property) | `true` |
 | `subscribe` / `unsubscribe` | `thing`, `name` (event) | `true` |
 | `adminProfiles` | — | profiles `{id, name, level, lastLogin?}` (level 0) |
@@ -53,7 +55,7 @@ Pushed: `welcome {terminal, profile}` then `resources {pages: [{id, version}], t
 page changes), then
 `value {thing, property, value}`,
 `event {thing, event, value}`, `online {thing, online}`, `things-changed`, `contexts-changed`,
-`terminal {terminal}` (its settings changed). Each profile has a stored level 0-9 (0 =
+`terminal {terminal}` (its settings changed), `notices-changed` (ask `notices` again). Each profile has a stored level 0-9 (0 =
 administration, 5 = member, 9 = read only, as when not signed in); older role databases are
 migrated (admin → 0, member → 5, guest → 9).
 

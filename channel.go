@@ -71,6 +71,8 @@ type Channel struct {
 	registry *Registry
 	themes   string // folder of the signed theme archives
 	master   string // TD id of the eria-manager master
+	// TD id of service-notices
+	noticesThing string
 }
 
 // session is the state of one connection.
@@ -296,6 +298,12 @@ func (s *session) handle(req request) (any, *opError) {
 		}
 		s.ch.hub.refresh("")
 		return true, nil
+
+	// --- Notifications (notices.go) ---
+	case "notices":
+		return s.notices()
+	case "markRead":
+		return s.markRead(req)
 
 	case "observe", "unobserve", "subscribe", "unsubscribe":
 		k := feedKey{req.Thing, kindProperty, req.Name}

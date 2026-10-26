@@ -25,3 +25,5 @@ database: eria-ui-server.db
 themes: themes
 # TD id of the eria-manager master, for the admin console
 master: urn:eria:manager:1
+# TD id of service-notices, whose notifications go to the apps
+notices: urn:eria:service:notices
