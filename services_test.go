@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,15 @@ func TestHref(t *testing.T) {
 	}
 	if got := href(p.Forms, "observeproperty"); got != "ws://10.0.0.33:20001/voletSEJ/position" {
 		t.Errorf("observe href = %q", got)
+	}
+}
+
+// manager-contexts' "chosen": the named choices reach the UI (eria-choice).
+func TestChoicesRelayed(t *testing.T) {
+	var td TD
+	json.Unmarshal([]byte(`{"id":"urn:c","properties":{"chosen":{"type":"array","items":{"type":"string","oneOf":[{"const":"away","title":"Absents"}]}}}}`), &td)
+	b, _ := json.Marshal(buildServices(td, true)[0].Properties["chosen"])
+	if !strings.Contains(string(b), `"items":{"type":"string","oneOf":[{"const":"away","title":"Absents"}]}`) {
+		t.Errorf("chosen = %s", b)
 	}
 }

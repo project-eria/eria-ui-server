@@ -32,6 +32,8 @@ type Property struct {
 	Minimum      *float64        `json:"minimum,omitempty"`
 	Maximum      *float64        `json:"maximum,omitempty"`
 	Enum         []any           `json:"enum,omitempty"`
+	OneOf        json.RawMessage `json:"oneOf,omitempty"`
+	Items        json.RawMessage `json:"items,omitempty"`
 	ReadOnly     bool            `json:"readOnly"`
 	Observable   bool            `json:"observable"`
 	UriVariables json.RawMessage `json:"uriVariables,omitempty"`
