@@ -32,9 +32,12 @@ func TestNotices(t *testing.T) {
 				}
 			}
 		case r.URL.Path == "/notices":
-			w.Write([]byte(`[{"id":"2","key":"garage","audience":"profile","title":"Garage"},{"id":"1","key":"eau","audience":"all","title":"Eau"}]`))
+			old := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)
+			recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			// 4: resolved long ago, read (gone); 3: resolved long ago, unread (kept for profile 1); 5: resolved lately, read (kept)
+			w.Write([]byte(`[{"id":"5","key":"vmc","audience":"profile","title":"VMC","resolved":"` + recent + `"},{"id":"4","key":"cave","audience":"all","title":"Cave","resolved":"` + old + `"},{"id":"3","key":"porte","audience":"profile","title":"Porte","resolved":"` + old + `"},{"id":"2","key":"garage","audience":"profile","title":"Garage"},{"id":"1","key":"eau","audience":"all","title":"Eau"}]`))
 		case r.URL.Path == "/read/1":
-			w.Write([]byte(`["2"]`))
+			w.Write([]byte(`["2","4","5"]`))
 		case r.URL.Path == "/markRead":
 			body, _ := io.ReadAll(r.Body)
 			marked <- string(body)
@@ -86,7 +89,7 @@ func TestNotices(t *testing.T) {
 		return out
 	}
 
-	// Not signed in: the "all" notices only, never read, and no markRead.
+	// Not signed in: the "all" notices only (not those resolved over 24 h ago), never read, and no markRead.
 	if got := titles(a.call("notices", nil)); len(got) != 1 || got[0] != "Eau" {
 		t.Errorf("notices without session = %v", got)
 	}
@@ -95,7 +98,7 @@ func TestNotices(t *testing.T) {
 	}
 
 	a.call("login", map[string]any{"profile": 1, "pin": "1234"})
-	if got := titles(a.call("notices", nil)); len(got) != 2 || got[0] != "Garage+read" || got[1] != "Eau" {
+	if got := strings.Join(titles(a.call("notices", nil)), " "); got != "VMC+read Porte Garage+read Eau" {
 		t.Errorf("notices of profile 1 = %v", got)
 	}
 	if r := a.call("markRead", map[string]any{"value": []string{"1"}}); r["result"] != true {

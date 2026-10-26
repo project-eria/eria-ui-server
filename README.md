@@ -30,7 +30,7 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `read` | `thing`, `name` | value (hidden Things: level 0 only, as for every Thing op) |
 | `write` | `thing`, `name`, `value` | `null` (signed in only) |
 | `invoke` | `thing`, `name`, `value` (input) | output (signed in only) |
-| `notices` | — | notices of service-notices (`notices:` in config) this connection may see, newest first, each with `read` (`audience: profile` ones for a signed-in person only); `[]` without the service |
+| `notices` | — | notices of service-notices (`notices:` in config) this connection may see, newest first, each with `read` (`audience: profile` ones for a signed-in person only; a resolved one leaves the list 24 h after its resolution once read — read or not without a person); `[]` without the service |
 | `markRead` | `value`: notice ids | `true` (signed in only) |
 | `observe` / `unobserve` | `thing`, `name` (property) | `true` |
 | `subscribe` / `unsubscribe` | `thing`, `name` (event) | `true` |

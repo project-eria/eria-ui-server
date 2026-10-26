@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	zlog "github.com/rs/zerolog/log"
 )
@@ -35,8 +36,13 @@ func (h *Hub) watchNotices(ctx context.Context, thing string) {
 	}
 }
 
+// keepResolved is how long a resolved notice stays in a person's list once
+// read (without a person, read or not: nobody can mark it).
+const keepResolved = 24 * time.Hour
+
 // notices gives the notices this connection may see, newest first: "profile"
-// ones only to a signed-in person, each with its read state.
+// ones only to a signed-in person, each with its read state; a resolved and
+// read one leaves the list keepResolved after its resolution.
 func (s *session) notices() (any, *opError) {
 	td, ok := s.ch.registry.Thing(s.ch.noticesThing)
 	if !ok {
@@ -68,11 +74,16 @@ func (s *session) notices() (any, *opError) {
 	}
 
 	out := make([]map[string]any, 0, len(list))
+	old := time.Now().Add(-keepResolved)
 	for _, n := range list {
 		if n["audience"] != "all" && !signedIn {
 			continue
 		}
 		id, _ := n["id"].(string)
+		resolved, _ := n["resolved"].(string)
+		if at, err := time.Parse(time.RFC3339, resolved); err == nil && at.Before(old) && (read[id] || !signedIn) {
+			continue
+		}
 		n["read"] = read[id]
 		delete(n, "key") // the service's own handle
 		out = append(out, n)
