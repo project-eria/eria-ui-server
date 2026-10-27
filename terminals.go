@@ -19,7 +19,8 @@ type Terminal struct {
 	Type         string `json:"type"` // "" = detected type
 	DetectedType string `json:"detectedType"`
 	LastSeen     int64  `json:"lastSeen"`
-	Online       bool   `json:"online"` // an app of this terminal is connected now
+	HomePage     string `json:"homePage"` // page opened at start; "" = the house's
+	Online       bool   `json:"online"`   // an app of this terminal is connected now
 }
 
 // Terminal types, smallest to largest (PLAN §5.4).
@@ -42,6 +43,15 @@ func (a *Auth) migrateTerminals() error {
 		first_seen    INTEGER NOT NULL,
 		last_seen     INTEGER NOT NULL
 	)`)
+	if err != nil {
+		return err
+	}
+	// Older databases: the start page of a terminal (2026-10-26).
+	var n int
+	a.db.QueryRow(`SELECT count(*) FROM pragma_table_info('terminals') WHERE name = 'home_page'`).Scan(&n)
+	if n == 0 {
+		_, err = a.db.Exec(`ALTER TABLE terminals ADD COLUMN home_page TEXT NOT NULL DEFAULT ''`)
+	}
 	return err
 }
 
@@ -70,11 +80,11 @@ func (a *Auth) Identify(secret string) (Terminal, error) {
 
 // ponytail: the theme, aspect and pages columns of older databases stay
 // unused (PLAN §5.000: pages are on every terminal, their look is theirs).
-const terminalColumns = `id, name, type, detected_type, last_seen`
+const terminalColumns = `id, name, type, detected_type, last_seen, home_page`
 
 func scanTerminal(row interface{ Scan(...any) error }) (Terminal, error) {
 	var t Terminal
-	if err := row.Scan(&t.ID, &t.Name, &t.Type, &t.DetectedType, &t.LastSeen); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.Type, &t.DetectedType, &t.LastSeen, &t.HomePage); err != nil {
 		return t, err
 	}
 	t.Code = strings.ToUpper(t.ID[:6])
@@ -113,9 +123,10 @@ func (a *Auth) ReportType(id, detected string) error {
 
 // TerminalChange holds the settings an admin changes; nil fields are kept.
 type TerminalChange struct {
-	ID   string  `json:"id"`
-	Name *string `json:"name"`
-	Type *string `json:"type"` // "" = detected
+	ID       string  `json:"id"`
+	Name     *string `json:"name"`
+	Type     *string `json:"type"`     // "" = detected
+	HomePage *string `json:"homePage"` // "" = the house's start page
 }
 
 func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
@@ -129,6 +140,14 @@ func (a *Auth) ConfigureTerminal(in TerminalChange) (Terminal, error) {
 	}
 	if in.Type != nil {
 		if _, err := a.db.Exec(`UPDATE terminals SET type = ? WHERE id = ?`, *in.Type, in.ID); err != nil {
+			return Terminal{}, err
+		}
+	}
+	if in.HomePage != nil {
+		if err := a.knownPage(*in.HomePage); err != nil {
+			return Terminal{}, err
+		}
+		if _, err := a.db.Exec(`UPDATE terminals SET home_page = ? WHERE id = ?`, *in.HomePage, in.ID); err != nil {
 			return Terminal{}, err
 		}
 	}

@@ -155,7 +155,7 @@ func (s *session) pushResources() {
 	for _, id := range used {
 		themes = append(themes, map[string]string{"id": id, "hash": themeHash(s.ch.themes, id)})
 	}
-	s.ch.hub.push(s.client, map[string]any{"push": "resources", "pages": pages, "themes": themes})
+	s.ch.hub.push(s.client, map[string]any{"push": "resources", "pages": pages, "themes": themes, "homePage": s.ch.auth.HomePage()})
 }
 
 func (s *session) viewer() *Profile {
@@ -410,6 +410,16 @@ func (s *session) handle(req request) (any, *opError) {
 			return nil, internal(err)
 		}
 		s.ch.hub.disconnect(id)
+		return true, nil
+	case "setHomePage":
+		var id string
+		if json.Unmarshal(req.Value, &id) != nil {
+			return nil, fail(failInvalid, "bad page id")
+		}
+		if err := auth.SetHomePage(id); err != nil {
+			return nil, invalid(err)
+		}
+		s.ch.hub.refresh("") // every app gets the new start page with its resources
 		return true, nil
 	case "setContexts":
 		var list []Context

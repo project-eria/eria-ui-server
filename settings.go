@@ -17,8 +17,38 @@ func (a *Auth) migrateSettings() error {
 		);
 		CREATE TABLE IF NOT EXISTS hidden (pattern TEXT PRIMARY KEY);
 		CREATE TABLE IF NOT EXISTS manual_things (id TEXT PRIMARY KEY, url TEXT NOT NULL);
-		CREATE TABLE IF NOT EXISTS seeded (name TEXT PRIMARY KEY);`)
+		CREATE TABLE IF NOT EXISTS seeded (name TEXT PRIMARY KEY);
+		CREATE TABLE IF NOT EXISTS options (key TEXT PRIMARY KEY, value TEXT NOT NULL);`)
 	return err
+}
+
+// HomePage is the house's start page, for the terminals that have none of
+// their own ("" = the first page by title).
+func (a *Auth) HomePage() string {
+	var id string
+	a.db.QueryRow(`SELECT value FROM options WHERE key = 'homePage'`).Scan(&id)
+	return id
+}
+
+func (a *Auth) SetHomePage(id string) error {
+	if err := a.knownPage(id); err != nil {
+		return err
+	}
+	_, err := a.db.Exec(`INSERT INTO options (key, value) VALUES ('homePage', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, id)
+	return err
+}
+
+// knownPage accepts "" (no choice) or the id of an existing page. A start
+// page deleted later is simply skipped by the app.
+func (a *Auth) knownPage(id string) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := a.Page(id); err != nil {
+		return errInvalid
+	}
+	return nil
 }
 
 // SeedSettings copies the first values from config.yml, once.

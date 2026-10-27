@@ -44,13 +44,14 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `masterAction` | `name`, `value` (input object), `token` (added by the app's Rust side) | the action's output; the token is relayed, never kept (level 0) |
 | `themes` | — | signed themes of the themes folder `{id, name, version, hash, aspects, layouts, report, error?}`, for creating a page (level 0) |
 | `theme` | `value`: id | `{archive (base64), signature}` |
-| `terminals`, `hidden` | — | lists (level 0); a terminal is `{id, code, name, type, detectedType, lastSeen, online}` |
-| `configureTerminal` | `value`: `{id, name?, type?}` | terminal (level 0) |
+| `terminals`, `hidden` | — | lists (level 0); a terminal is `{id, code, name, type, detectedType, lastSeen, homePage, online}` |
+| `configureTerminal` | `value`: `{id, name?, type?, homePage?}` (`homePage`: a page id, `""` = the house's) | terminal (level 0) |
+| `setHomePage` | `value`: page id, `""` = none | `true`; the house's start page, for terminals without their own (level 0) |
 | `forgetTerminal` | `value`: id | `true` (level 0) |
 | `setContexts` | `value`: `[{id, label}]` | `true` (level 0) |
 | `setHidden` | `value`: glob patterns | `true` (level 0) |
 
-Pushed: `welcome {terminal, profile}` then `resources {pages: [{id, version}], themes: [{id, hash}]}`
+Pushed: `welcome {terminal, profile}` then `resources {pages: [{id, version}], themes: [{id, hash}], homePage}`
 (every page, and the signed themes they use) first (again after sign-in or out, and whenever a
 page changes), then
 `value {thing, property, value}`,
