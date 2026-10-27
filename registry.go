@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	eria "github.com/project-eria/eria-core"
 	"github.com/project-eria/go-wot/protocolDnssd"
 	zlog "github.com/rs/zerolog/log"
 )
@@ -56,9 +57,10 @@ func NewRegistry(hide []string) *Registry {
 	return &Registry{things: map[string]*thingEntry{}, hide: hide}
 }
 
-// Discover browses `_wot._tcp` until ctx is done.
+// Discover browses the server's network (`_wot._tcp` for the default one)
+// until ctx is done: Things of other networks are never seen.
 func (r *Registry) Discover(ctx context.Context) error {
-	entries, err := protocolDnssd.Browse(ctx, protocolDnssd.BrowseOptions{PreferIPv4: true, AllowPrivate: true})
+	entries, err := protocolDnssd.Browse(ctx, protocolDnssd.BrowseOptions{Network: eria.Network(), PreferIPv4: true, AllowPrivate: true})
 	if err != nil {
 		return err
 	}

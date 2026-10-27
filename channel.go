@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	eria "github.com/project-eria/eria-core"
 	zlog "github.com/rs/zerolog/log"
 )
 
@@ -364,7 +365,7 @@ func (s *session) handle(req request) (any, *opError) {
 	// --- Master console (eria-manager) ---
 	case "master":
 		_, found := s.ch.registry.Thing(s.ch.master)
-		return map[string]any{"id": s.ch.master, "found": found, "online": s.ch.registry.Status()[s.ch.master]}, nil
+		return map[string]any{"id": s.ch.master, "found": found, "online": s.ch.registry.Status()[s.ch.master], "network": eria.Network()}, nil
 	case "masterAction":
 		return s.masterAction(req)
 
