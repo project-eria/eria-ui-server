@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +30,8 @@ type thingEntry struct {
 	td      TD
 	raw     json.RawMessage // the TD as received, for the explorer
 	url     string
-	manual  bool // added by address by the admin, not found by mDNS
+	node    string // machine name from the mDNS announce ("" when added by address)
+	manual  bool   // added by address by the admin, not found by mDNS
 	fetched time.Time
 	seen    time.Time
 }
@@ -39,6 +41,7 @@ type ThingInfo struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	URL    string `json:"url"`
+	Node   string `json:"node,omitempty"` // machine announcing it (mDNS host name)
 	Online bool   `json:"online"`
 	Hidden bool   `json:"hidden"` // matched by a hidden pattern: never shown to people
 	Manual bool   `json:"manual"`
@@ -65,7 +68,13 @@ func (r *Registry) Discover(ctx context.Context) error {
 		return err
 	}
 	for e := range entries {
-		r.seen(e.TDURL.String(), false)
+		// The machine's name: in the TXT record for go-wot apps (their SRV
+		// host is built from the IP), the host itself for an ESP32
+		node := e.TXT.Extra["node"]
+		if node == "" {
+			node, _, _ = strings.Cut(e.Host, ".") // "eria-aabbcc.local." -> "eria-aabbcc"
+		}
+		r.seen(e.TDURL.String(), node, false)
 	}
 	return nil
 }
@@ -77,7 +86,7 @@ func (r *Registry) Poll(ctx context.Context, urls func() []string) {
 	defer t.Stop()
 	for {
 		for _, u := range urls() {
-			r.seen(u, true)
+			r.seen(u, "", true)
 		}
 		select {
 		case <-ctx.Done():
@@ -87,7 +96,7 @@ func (r *Registry) Poll(ctx context.Context, urls func() []string) {
 	}
 }
 
-func (r *Registry) seen(url string, manual bool) {
+func (r *Registry) seen(url, node string, manual bool) {
 	now := time.Now()
 	r.mu.Lock()
 	for _, t := range r.things {
@@ -106,16 +115,16 @@ func (r *Registry) seen(url string, manual bool) {
 		zlog.Warn().Err(err).Str("url", url).Msg("[registry:seen] can't read TD")
 		return
 	}
-	r.add(td, raw, url, manual, now)
+	r.add(td, raw, url, node, manual, now)
 }
 
-func (r *Registry) add(td TD, raw json.RawMessage, url string, manual bool, now time.Time) {
+func (r *Registry) add(td TD, raw json.RawMessage, url, node string, manual bool, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, known := r.things[td.ID]; !known {
 		zlog.Info().Str("id", td.ID).Str("url", url).Msg("[registry:seen] new Thing")
 	}
-	r.things[td.ID] = &thingEntry{td: td, raw: raw, url: url, manual: manual, fetched: now, seen: now}
+	r.things[td.ID] = &thingEntry{td: td, raw: raw, url: url, node: node, manual: manual, fetched: now, seen: now}
 }
 
 // SetHide replaces the hidden patterns.
@@ -145,7 +154,7 @@ func (r *Registry) Things() []ThingInfo {
 	defer r.mu.RUnlock()
 	list := []ThingInfo{}
 	for id, t := range r.things {
-		list = append(list, ThingInfo{ID: id, Title: label(t.td), URL: t.url, Online: time.Since(t.seen) < offlineAfter,
+		list = append(list, ThingInfo{ID: id, Title: label(t.td), URL: t.url, Node: t.node, Online: time.Since(t.seen) < offlineAfter,
 			Hidden: r.hiddenLocked(id), Manual: t.manual})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Title < list[j].Title })

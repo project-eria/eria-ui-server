@@ -591,7 +591,7 @@ func (ch *Channel) addThing(address string) (any, *opError) {
 		if err := ch.auth.AddManual(td.ID, c); err != nil {
 			return nil, internal(err)
 		}
-		ch.registry.add(td, raw, c, true, time.Now())
+		ch.registry.add(td, raw, c, "", true, time.Now())
 		ch.hub.broadcast("", map[string]string{"push": "things-changed"})
 		return map[string]string{"id": td.ID, "url": c}, nil
 	}
