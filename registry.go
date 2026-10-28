@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"sort"
@@ -68,15 +69,23 @@ func (r *Registry) Discover(ctx context.Context) error {
 		return err
 	}
 	for e := range entries {
-		// The machine's name: in the TXT record for go-wot apps (their SRV
-		// host is built from the IP), the host itself for an ESP32
-		node := e.TXT.Extra["node"]
-		if node == "" {
-			node, _, _ = strings.Cut(e.Host, ".") // "eria-aabbcc.local." -> "eria-aabbcc"
-		}
-		r.seen(e.TDURL.String(), node, false)
+		r.seen(e.TDURL.String(), nodeOf(e), false)
 	}
 	return nil
+}
+
+// nodeOf is the name of the machine announcing a Thing: in the TXT record
+// for go-wot apps, else the mDNS host (an ESP32's own name). A host built
+// from the IP (go-wot before v1.10.0, "172-23-0-7") names no machine.
+func nodeOf(e protocolDnssd.Entry) string {
+	if node := e.TXT.Extra["node"]; node != "" {
+		return node
+	}
+	host, _, _ := strings.Cut(e.Host, ".")
+	if net.ParseIP(strings.ReplaceAll(host, "-", ".")) != nil {
+		return ""
+	}
+	return host
 }
 
 // Poll re-reads the Things added by address (no mDNS announces them) until
