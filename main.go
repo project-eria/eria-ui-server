@@ -113,7 +113,7 @@ func newMux(ch *Channel) *http.ServeMux {
 
 	// Health probe of the orchestrator's agent (public, see eria-app.yml).
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK) // the agent's health gate wants 200 exactly
 	})
 	return mux
 }
