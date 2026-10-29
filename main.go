@@ -28,8 +28,6 @@ var config = struct {
 	// First admin's PIN, used only while there is no profile. The orchestrator's
 	// deployment config is the place for secrets (never eria-app.yml).
 	AdminPin string `yaml:"adminPin,omitempty"`
-	// TD id of the eria-manager master, relayed for the admin console.
-	Master string `yaml:"master" default:"urn:eria:manager:1"`
 	// TD id of service-notices, whose notifications are given to the apps.
 	Notices string `yaml:"notices" default:"urn:eria:service:notices"`
 	// Signed theme archives (env ERIA_UI_SERVER_THEMES overrides it).
@@ -91,7 +89,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, master: config.Master, noticesThing: config.Notices}),
+		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, noticesThing: config.Notices}),
 	}
 	go func() {
 		zlog.Info().Str("addr", server.Addr).Msg("[main] Listening")

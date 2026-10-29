@@ -23,7 +23,5 @@ database: eria-ui-server.db
 # adminPin: "<4 to 8 digits>"
 # Signed theme archives: <id>.tar + <id>.tar.sig (env ERIA_UI_SERVER_THEMES overrides it)
 themes: themes
-# TD id of the eria-manager master, for the admin console
-master: urn:eria:manager:1
 # TD id of service-notices, whose notifications go to the apps
 notices: urn:eria:service:notices

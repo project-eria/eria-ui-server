@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	eria "github.com/project-eria/eria-core"
 	zlog "github.com/rs/zerolog/log"
 )
 
@@ -37,7 +36,6 @@ type request struct {
 	Value   json.RawMessage `json:"value,omitempty"` // value to write, action input, op argument
 	Profile int64           `json:"profile,omitempty"`
 	PIN     string          `json:"pin,omitempty"`
-	Token   string          `json:"token,omitempty"` // master token (masterAction), added by the app's Rust side
 }
 
 type reply struct {
@@ -71,7 +69,6 @@ type Channel struct {
 	auth     *Auth
 	registry *Registry
 	themes   string // folder of the signed theme archives
-	master   string // TD id of the eria-manager master
 	// TD id of service-notices
 	noticesThing string
 }
@@ -362,13 +359,6 @@ func (s *session) handle(req request) (any, *opError) {
 	case "themes":
 		return Themes(s.ch.themes), nil
 
-	// --- Master console (eria-manager) ---
-	case "master":
-		_, found := s.ch.registry.Thing(s.ch.master)
-		return map[string]any{"id": s.ch.master, "found": found, "online": s.ch.registry.Status()[s.ch.master], "network": eria.Network()}, nil
-	case "masterAction":
-		return s.masterAction(req)
-
 	// --- Things explorer ---
 	case "things":
 		return s.ch.registry.Things(), nil
@@ -596,25 +586,4 @@ func (ch *Channel) addThing(address string) (any, *opError) {
 		return map[string]string{"id": td.ID, "url": c}, nil
 	}
 	return nil, fail(failOffline, "no Thing Description at this address")
-}
-
-// masterAction invokes an action of the master with the admin's token, sent
-// by the app with each request and never kept here (AUTH-DESIGN §3.6: the
-// relay forwards, it holds no person's credential).
-func (s *session) masterAction(req request) (any, *opError) {
-	if req.Token == "" {
-		return nil, fail(failRefused, "no master token: set it in the console")
-	}
-	td, ok := s.ch.registry.Thing(s.ch.master)
-	a, exists := td.Actions[req.Name]
-	if !ok || !exists {
-		return nil, fail(failInvalid, "unknown master or master action")
-	}
-	input := map[string]any{}
-	if len(req.Value) > 0 && json.Unmarshal(req.Value, &input) != nil {
-		return nil, fail(failInvalid, "the input must be an object")
-	}
-	input["token"] = req.Token
-	body, _ := json.Marshal(input)
-	return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), body)
 }
