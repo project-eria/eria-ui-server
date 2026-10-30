@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,11 +45,7 @@ func TestNotices(t *testing.T) {
 	defer up.Close()
 	ws := "ws" + strings.TrimPrefix(up.URL, "http")
 
-	auth, err := OpenAuth(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	auth.Bootstrap("1234")
+	fa := newFakeAuth(t)
 	registry := NewRegistry(nil)
 	registry.things["urn:eria:service:notices"] = &thingEntry{seen: time.Now(), td: TD{
 		ID: "urn:eria:service:notices",
@@ -67,10 +62,11 @@ func TestNotices(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	go hub.watchNotices(ctx, "urn:eria:service:notices")
-	srv := httptest.NewServer(newMux(&Channel{hub: hub, auth: auth, registry: registry, noticesThing: "urn:eria:service:notices"}))
+	srv := httptest.NewServer(newMux(&Channel{hub: hub, auth: fa.client, registry: registry, noticesThing: "urn:eria:service:notices"}))
 	defer srv.Close()
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/ws", http.Header{"X-Eria-Terminal": {"terminal-one-secret-0000000"}})
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/ws",
+		http.Header{"Authorization": {"Bearer " + fa.token("salon", "", 9, time.Hour)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +93,7 @@ func TestNotices(t *testing.T) {
 		t.Errorf("markRead without session = %v, want refused", r)
 	}
 
-	a.call("login", map[string]any{"profile": 1, "pin": "1234"})
+	a.call("token", map[string]any{"value": fa.token("salon", "profil:1", 2, 5*time.Minute)})
 	if got := strings.Join(titles(a.call("notices", nil)), " "); got != "VMC+read Porte Garage+read Eau" {
 		t.Errorf("notices of profile 1 = %v", got)
 	}

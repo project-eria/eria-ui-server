@@ -1,36 +1,23 @@
 # ERIA package description (orchestrator catalog, eria-manager DESIGN §12.3)
 name: eria-ui-server
-title: Serveur de l'application ERIA
-description: Relais entre l'application ERIA et les services (lumières, volets, contextes…) ; profils, terminaux, pages
+title: Relais de l'application ERIA
+description: Relais entre l'application ERIA et les services (lumières, volets, contextes…), et tunnel vers auth
 kind: service
 requires: []
 
 exec:
   args: ["--config-path", "{config}"]
-  # Profiles, sessions and screens: kept in the agent's data folder across reinstalls.
-  # Stateful app: pin it to one node when deploying.
+  # No state of its own (AUTH-DESIGN §3.6). {data} holds its TLS files:
+  #   eria-ui-server csr  (TLS key), then eria-manager tls-sign --role relais-interieur
+  #   roots.pem (eria-manager tls-root) and auth-keyset.json (eria-manager auth-keyset)
   # Themes: drop signed archives (<id>.tar + .sig) in {data}/themes on the node.
-  env: ["ERIA_UI_SERVER_DATABASE={data}/eria-ui-server.db", "ERIA_UI_SERVER_THEMES={data}/themes"]
-  health: { url: "http://127.0.0.1:{port}/api/health", grace: 20s, interval: 10s }
+  env: ["ERIA_UI_SERVER_DATA={data}"]
+  health: { url: "http://127.0.0.1:8099/api/health", grace: 20s, interval: 10s }
 
 config: |
   host: 0.0.0.0
   port: 8090
   location: Europe/Paris
-  # First admin's PIN (4 to 8 digits), used only while there is no profile: change it afterwards
-  adminPin: "<4 to 8 digits>"
-  # Things never shown to the user (glob on TD id): apps, agents, orchestrator
-  hide:
-    - "urn:eria:app:controler:*"
-    - "urn:eria:agent:*"
-    - "urn:eria:manager:1"
-  # Contexts of manager-contexts offered to people
-  contexts:
-    - id: away
-      label: Absent
-    - id: guests
-      label: Invités
-    - id: canicule
-      label: Canicule
-    - id: holiday
-      label: Vacances
+  # auth's tunnel listener, and the id of the house (the tokens' aud)
+  auth: "<auth node>:8443"
+  deployment: eria-maison

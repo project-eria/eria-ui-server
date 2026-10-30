@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -58,8 +57,8 @@ func (s *session) notices() (any, *opError) {
 	}
 
 	read := map[string]bool{}
-	p := s.viewer()
-	signedIn := p != nil && p.Level < notSignedIn
+	p, _ := s.current()
+	signedIn := p != nil && p.Sub != "" && profileKey(p) != ""
 	if signedIn {
 		form := href(td.Properties["read"].Forms, "readproperty")
 		raw, err := callThing(td, http.MethodGet, strings.Replace(form, "{profile}", url.PathEscape(profileKey(p)), 1), nil)
@@ -94,8 +93,8 @@ func (s *session) notices() (any, *opError) {
 // markRead records the notices as read for the signed-in person, then tells
 // every app (the same person may be on another terminal).
 func (s *session) markRead(req request) (any, *opError) {
-	p := s.viewer()
-	if p == nil || p.Level >= notSignedIn {
+	p, _ := s.current()
+	if p == nil || p.Sub == "" || profileKey(p) == "" {
 		return nil, fail(failRefused, "sign in to mark notices as read")
 	}
 	var ids []string
@@ -114,6 +113,3 @@ func (s *session) markRead(req request) (any, *opError) {
 	s.ch.hub.broadcast("", map[string]string{"push": "notices-changed"})
 	return true, nil
 }
-
-// profileKey is how service-notices names a profile.
-func profileKey(p *Profile) string { return strconv.FormatInt(p.ID, 10) }

@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/project-eria/go-wot/auth"
 )
 
 // fakeThing mimics a go-wot Thing: HTTP read / write / invoke, and raw-JSON
@@ -124,13 +125,7 @@ func TestChannel(t *testing.T) {
 	defer up.Close()
 	ws := "ws" + strings.TrimPrefix(up.URL, "http")
 
-	auth, err := OpenAuth(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	auth.Bootstrap("1234")
-	guest, _ := auth.CreateProfile("Invité", 9, "0000")
-
+	fa := newFakeAuth(t)
 	registry := NewRegistry(nil)
 	td := TD{
 		ID: "urn:test",
@@ -149,55 +144,65 @@ func TestChannel(t *testing.T) {
 	}
 	registry.things["urn:test"] = &thingEntry{seen: time.Now(), td: td}
 	hub := NewHub(registry)
-	srv := httptest.NewServer(newMux(&Channel{hub: hub, auth: auth, registry: registry}))
+	srv := httptest.NewServer(newMux(&Channel{hub: hub, auth: fa.client, registry: registry}))
 	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws"
 
-	dial := func(secret, token string) *testApp {
+	dial := func(token string) *testApp {
 		t.Helper()
-		header := http.Header{"X-Eria-Terminal": {secret}}
+		header := http.Header{}
 		if token != "" {
 			header.Set("Authorization", "Bearer "+token)
 		}
-		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/ws", header)
+		conn, _, err := websocket.DefaultDialer.Dial(url, header)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return &testApp{t: t, conn: conn}
 	}
-	const secret1, secret2 = "terminal-one-secret-0000000", "terminal-two-secret-0000000"
+	salon := fa.token("salon", "", 9, time.Hour)
+	parent := fa.token("salon", "profil:1", 1, 5*time.Minute)
 
-	// A terminal must identify itself; an unknown one is registered.
-	if _, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/api/ws", nil); err == nil || resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("handshake without terminal secret accepted (%v)", err)
+	// A refused token closes the door; no token opens the tunnel only.
+	if _, resp, err := websocket.DefaultDialer.Dial(url, http.Header{"Authorization": {"Bearer nope"}}); err == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("handshake with a bad token accepted (%v)", err)
 	}
-	a := dial(secret1, "")
-	welcome := a.push("welcome")
-	term, _ := welcome["terminal"].(map[string]any)
-	if code, _ := term["code"].(string); len(code) != 6 || welcome["profile"] != nil {
-		t.Fatalf("welcome = %v, want a 6-character code and no profile", welcome)
+	n := dial("")
+	n.push("welcome")
+	if r := n.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); errType(r) != failRefused {
+		t.Errorf("read without a token = %v, want refused", r)
 	}
-	if list, _ := auth.Terminals(); len(list) != 1 {
-		t.Fatalf("%d terminals registered, want 1", len(list))
+	r := n.call("tunnelOpen", nil)
+	tun, _ := r["result"].(map[string]any)["tunnel"].(float64)
+	n.call("tunnelData", map[string]any{"tunnel": tun, "value": base64.StdEncoding.EncodeToString([]byte("hello"))})
+	if got := n.push("tunnel"); got["data"] != base64.StdEncoding.EncodeToString([]byte("hello")) {
+		t.Errorf("tunnel echo = %v", got)
+	}
+	// The token obtained through the tunnel opens the rest.
+	if r := n.call("token", map[string]any{"value": salon}); r["result"] != true {
+		t.Fatalf("token = %v", r)
+	}
+	if w := n.push("welcome"); w["level"] != float64(9) {
+		t.Errorf("welcome after token = %v", w)
+	}
+	n.push("resources")
+	if r := n.call("token", map[string]any{"value": fa.token("cuisine", "", 9, time.Hour)}); errType(r) != failRefused {
+		t.Errorf("another terminal's token = %v, want refused", r)
 	}
 
-	// Not signed in: reads, never acts.
+	// Terminal token: reads, never acts.
+	a := dial(salon)
+	a.push("welcome")
 	if r := a.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); r["result"] != float64(42) {
 		t.Errorf("read = %v", r)
 	}
 	if r := a.call("invoke", map[string]any{"thing": "urn:test", "name": "toggle"}); errType(r) != failRefused {
-		t.Errorf("invoke without session = %v, want refused", r)
-	}
-	if r := a.call("login", map[string]any{"profile": 1, "pin": "9999"}); errType(r) != failRefused {
-		t.Errorf("wrong PIN = %v, want refused", r)
-	}
-	r := a.call("login", map[string]any{"profile": 1, "pin": "1234"})
-	result, _ := r["result"].(map[string]any)
-	token, _ := result["token"].(string)
-	if token == "" {
-		t.Fatalf("login = %v", r)
+		t.Errorf("invoke at level 9 = %v, want refused", r)
 	}
 
-	// Signed in: commands, with typed errors.
+	// Signed in (the app sends its new token): commands, with typed errors.
+	a.call("token", map[string]any{"value": parent})
+	a.push("welcome")
 	if r := a.call("invoke", map[string]any{"thing": "urn:test", "name": "toggle"}); r["result"] != "done" {
 		t.Errorf("invoke = %v", r)
 	}
@@ -223,19 +228,16 @@ func TestChannel(t *testing.T) {
 	}
 	a.call("observe", map[string]any{"thing": "urn:test", "name": "temp"})
 	<-thing.connected
-	a.next(isValue(42)) // current value read over HTTP once connected
-	b := dial(secret2, "")
+	a.next(isValue(42))
+	b := dial(fa.token("entree", "", 9, time.Hour))
 	b.push("welcome")
 	b.call("observe", map[string]any{"thing": "urn:test", "name": "temp"})
-	b.next(isValue(42)) // late subscriber gets the cached value
+	b.next(isValue(42))
 	thing.emit("43")
 	a.next(isValue(43))
 	b.next(isValue(43))
 	if n := thing.open.Load(); n != 1 {
 		t.Fatalf("%d upstream sockets for 2 apps, want 1", n)
-	}
-	if r := a.call("observe", map[string]any{"thing": "urn:test", "name": "nope"}); errType(r) != failInvalid {
-		t.Errorf("unknown property = %v, want invalid", r)
 	}
 
 	// Events: pushed, never replayed.
@@ -246,80 +248,30 @@ func TestChannel(t *testing.T) {
 		return m["push"] == "event" && m["event"] == "ring" && m["value"] == "ding"
 	})
 
-	// The token signs the app in again when it reconnects.
-	again := dial(secret1, token)
-	if p, _ := again.push("welcome")["profile"].(map[string]any); p["name"] != "Admin" {
-		t.Errorf("welcome after reconnect: profile = %v", p)
-	}
-	again.conn.Close()
-
-	// Administration: level 0 only; the configured terminal is told.
-	g := dial("terminal-guest-secret-00000", "")
-	g.push("welcome")
-	g.call("login", map[string]any{"profile": guest.ID, "pin": "0000"})
-	if r := g.call("terminals", nil); errType(r) != failRefused {
-		t.Errorf("guest lists terminals = %v, want refused", r)
-	}
-	id2 := idOfSecret(t, auth, secret2)
-	if r := g.call("adminProfiles", nil); errType(r) != failRefused {
-		t.Errorf("guest lists profiles = %v, want refused", r)
-	}
-	if r := a.call("createProfile", map[string]any{"value": map[string]any{"name": "Lia", "level": 5, "pin": "2468"}}); r["error"] != nil {
-		t.Errorf("createProfile = %v", r)
-	}
-	if r := a.call("deleteProfile", map[string]any{"value": 1}); errType(r) != failInvalid {
-		t.Errorf("delete last admin = %v, want invalid", r)
-	}
-	if r := a.call("configureTerminal", map[string]any{"value": map[string]any{"id": id2, "name": "Entrée", "type": "wall-tablet"}}); r["error"] != nil {
-		t.Fatalf("configure = %v", r)
-	}
-	if term, _ := b.push("terminal")["terminal"].(map[string]any); term["name"] != "Entrée" || term["type"] != "wall-tablet" {
-		t.Errorf("configured terminal told %v", term)
-	}
-	if r := a.call("configureTerminal", map[string]any{"value": map[string]any{"id": id2, "type": "fridge"}}); errType(r) != failInvalid {
-		t.Errorf("unknown type = %v, want invalid", r)
-	}
-	if r := a.call("setContexts", map[string]any{"value": []map[string]string{{"id": "away", "label": "Absent"}}}); r["error"] != nil {
-		t.Errorf("setContexts = %v", r)
-	}
-	b.push("contexts-changed")
-	if r := a.call("contexts", nil); len(r["result"].([]any)) != 1 {
-		t.Errorf("contexts = %v", r)
-	}
-
-	// Pages: every page is pushed to every terminal; its theme is fixed.
-	hasPage := func(version float64) func(map[string]any) bool {
-		return func(m map[string]any) bool {
-			pages, _ := m["pages"].([]any)
-			if m["push"] != "resources" || len(pages) != 1 {
-				return false
-			}
-			ref, _ := pages[0].(map[string]any)
-			return ref["version"] == version
-		}
-	}
+	// Pages: auth decides on the person's token, every app gets the new version.
 	page := map[string]any{"title": "Entrée", "layout": "grid", "elements": []map[string]any{
 		{"id": "e1", "type": "action", "thing": "urn:test", "name": "toggle"}}}
-	r = a.call("savePage", map[string]any{"value": page})
-	saved, _ := r["result"].(map[string]any)
-	if saved["id"] == nil {
+	if r := b.call("savePage", map[string]any{"value": page}); errType(r) != failRefused {
+		t.Errorf("terminal token saves a page = %v, want refused", r)
+	}
+	if r := a.call("savePage", map[string]any{"value": page}); r["result"] == nil {
 		t.Fatalf("savePage = %v", r)
 	}
-	b.next(hasPage(1))
-	if r := g.call("savePage", map[string]any{"value": page}); errType(r) != failRefused {
-		t.Errorf("guest saves a page = %v, want refused", r)
+	if len(fa.saved) != 1 || fa.saved[0] != parent {
+		t.Errorf("auth got %d saves, not with the person's token", len(fa.saved))
 	}
-	if r := a.call("savePage", map[string]any{"value": map[string]any{"title": "Hex", "theme": "hex"}}); errType(r) != failInvalid {
-		t.Errorf("page in an unknown theme = %v, want invalid", r)
-	}
-	saved["title"] = "Entrée principale"
-	a.call("savePage", map[string]any{"value": saved})
-	b.next(hasPage(2))
-	if r := b.call("page", map[string]any{"value": saved["id"]}); r["result"].(map[string]any)["title"] != "Entrée principale" {
+	fa.sync()
+	if r := b.call("page", map[string]any{"value": "p1"}); r["result"].(map[string]any)["title"] != "Entrée" {
 		t.Errorf("page = %v", r)
 	}
+	if r := b.call("themes", nil); errType(r) != failRefused {
+		t.Errorf("level 9 lists themes = %v, want refused", r)
+	}
+	if r := a.call("things", nil); r["error"] != nil {
+		t.Errorf("parent lists Things = %v", r)
+	}
 
-	// can follows the level: the guest reads, the admin acts.
+	// can follows the level.
 	invokes := func(app *testApp) int {
 		services, _ := app.call("services", nil)["result"].([]any)
 		svc, _ := services[0].(map[string]any)
@@ -327,11 +279,11 @@ func TestChannel(t *testing.T) {
 		list, _ := can["invoke"].([]any)
 		return len(list)
 	}
-	if n := invokes(g); n != 0 {
-		t.Errorf("guest may invoke %d actions, want 0", n)
+	if n := invokes(b); n != 0 {
+		t.Errorf("level 9 may invoke %d actions, want 0", n)
 	}
 	if n := invokes(a); n != 2 {
-		t.Errorf("admin may invoke %d actions, want 2", n)
+		t.Errorf("parent may invoke %d actions, want 2", n)
 	}
 
 	// Last app gone: the upstream sockets are closed.
@@ -345,75 +297,38 @@ func TestChannel(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Hiding a Thing forgets it; forgetting a terminal disconnects it.
-	admin := dial(secret1, token)
-	admin.push("welcome")
-	// Hidden Things: kept for the admin's explorer, unreachable for others.
-	admin.call("setHidden", map[string]any{"value": []string{"urn:test"}})
-	if !registry.Hidden("urn:test") || len(registry.Services()) != 0 {
-		t.Error("hidden Thing still shown as services")
-	}
-	if r := g.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); errType(r) != failInvalid {
-		t.Errorf("guest reads a hidden Thing = %v, want invalid", r)
-	}
-	if r := admin.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); r["result"] != float64(42) {
-		t.Errorf("admin reads a hidden Thing = %v", r)
-	}
-	if r := admin.call("write", map[string]any{"thing": "urn:test", "name": "mode", "value": 2}); r["error"] != nil {
-		t.Errorf("admin writes a TD-writable property = %v", r)
-	}
-	things, _ := admin.call("things", nil)["result"].([]any)
-	if len(things) != 1 || things[0].(map[string]any)["hidden"] != true {
-		t.Errorf("things = %v", things)
-	}
-	if r := admin.call("td", map[string]any{"thing": "urn:test"}); r["error"] != nil {
-		t.Errorf("td = %v", r)
+	// Hidden Things are not offered.
+	registry.SetHide([]string{"urn:test"})
+	if r := b.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); errType(r) != failInvalid {
+		t.Errorf("read a hidden Thing = %v, want invalid", r)
 	}
 
-	// A Thing added by address is kept, polled, and can be forgotten.
-	tdServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/.well-known/wot" {
-			w.Write([]byte(`{"id":"urn:manual","title":"Manuel","properties":{},"actions":{}}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer tdServer.Close()
-	r = admin.call("addThing", map[string]any{"value": strings.TrimPrefix(tdServer.URL, "http://")})
-	if added, _ := r["result"].(map[string]any); added["id"] != "urn:manual" {
-		t.Fatalf("addThing = %v", r)
-	}
-	if urls := auth.ManualURLs(); len(urls) != 1 || !strings.HasSuffix(urls[0], "/.well-known/wot") {
-		t.Errorf("manual URLs = %v", urls)
-	}
-	if r := admin.call("forgetThing", map[string]any{"thing": "urn:test"}); errType(r) != failInvalid {
-		t.Errorf("forget an mDNS Thing = %v, want invalid", r)
-	}
-	if r := admin.call("forgetThing", map[string]any{"thing": "urn:manual"}); r["error"] != nil {
-		t.Errorf("forgetThing = %v", r)
-	}
-	if r := g.call("things", nil); errType(r) != failRefused {
-		t.Errorf("guest lists Things = %v, want refused", r)
-	}
-	admin.call("forgetTerminal", map[string]any{"value": id2})
-	b.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// A revoked terminal is disconnected.
+	fa.mu.Lock()
+	fa.revoke = []auth.Revocation{{Subject: "term:entree", Before: time.Now().Unix() + 1}}
+	fa.mu.Unlock()
+	fa.client.pollRevocations(hub.revalidate)
+	closed(t, b)
+
+	// A token not renewed closes the connection at its exp (+ grace).
+	expiryGrace = 0
+	short := dial(fa.token("bureau", "", 9, time.Second))
+	short.push("welcome")
+	closed(t, short)
+}
+
+// closed waits until the relay closes the app's connection.
+func closed(t *testing.T, a *testApp) {
+	t.Helper()
+	a.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
-		_, _, err := b.conn.ReadMessage()
+		_, _, err := a.conn.ReadMessage()
 		if err == nil {
 			continue
 		}
 		if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
-			t.Fatal("forgotten terminal still connected")
+			t.Fatal("connection still open")
 		}
-		break // closed by the server
+		return
 	}
-}
-
-func idOfSecret(t *testing.T, auth *Auth, secret string) string {
-	t.Helper()
-	term, err := auth.Identify(secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return term.ID
 }

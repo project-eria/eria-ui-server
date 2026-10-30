@@ -38,10 +38,11 @@ type feed struct {
 }
 
 type client struct {
-	send      chan []byte
-	feeds     map[feedKey]bool
-	terminal  string // public id of the terminal on the other end
-	resources func() // pushes the resource manifest again (channel.go)
+	send       chan []byte
+	feeds      map[feedKey]bool
+	terminal   string // id of the terminal on the other end ("" before its token)
+	resources  func() // pushes the resource manifest again (channel.go)
+	revalidate func() // closes the connection if its token is now revoked
 }
 
 // pushMsg is a message the server sends without being asked.
@@ -355,6 +356,22 @@ func (h *Hub) refresh(terminal string) {
 	h.mu.Unlock()
 	for _, f := range todo {
 		f() // outside the lock: it reads the database, then pushes
+	}
+}
+
+// revalidate asks every connection to check its token against the new
+// revocation list.
+func (h *Hub) revalidate() {
+	h.mu.Lock()
+	var checks []func()
+	for c := range h.clients {
+		if c.revalidate != nil {
+			checks = append(checks, c.revalidate)
+		}
+	}
+	h.mu.Unlock()
+	for _, check := range checks {
+		check()
 	}
 }
 

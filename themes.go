@@ -115,15 +115,15 @@ func readTheme(dir, id string) (Theme, error) {
 // themeArchive returns a theme's archive and signature, for the app to check.
 func themeArchive(dir, id string) (map[string]string, error) {
 	if !themeID.MatchString(id) {
-		return nil, errUnknown
+		return nil, errNoTheme
 	}
 	archive, err := os.ReadFile(filepath.Join(dir, id+".tar"))
 	if err != nil {
-		return nil, errUnknown
+		return nil, errNoTheme
 	}
 	sig, err := os.ReadFile(filepath.Join(dir, id+".tar.sig"))
 	if err != nil {
-		return nil, errUnknown
+		return nil, errNoTheme
 	}
 	return map[string]string{"archive": base64.StdEncoding.EncodeToString(archive), "signature": strings.TrimSpace(string(sig))}, nil
 }
@@ -140,3 +140,5 @@ func themeHash(dir, id string) string {
 	}
 	return t.Hash
 }
+
+var errNoTheme = errors.New("unknown theme")

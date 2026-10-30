@@ -1,27 +1,14 @@
-port: 8090 # HTTP port of the API and the app's WebSocket
+port: 8090 # TLS port of the app's WebSocket
 location: Europe/Paris # required by eria-core (timezone)
-# First values only, copied to the database at the first start, then edited by the admin.
-# Things never shown to the user (glob on TD id): apps, agents, orchestrator
-hide:
-  - "urn:eria:app:controler:*"
-  - "urn:eria:agent:*"
-  - "urn:eria:manager:1"
-# Contexts of manager-contexts offered to people (other active ones are shown too, by id)
-contexts:
-  - id: away
-    label: Absent
-  - id: guests
-    label: Invités
-  - id: canicule
-    label: Canicule
-  - id: holiday
-    label: Vacances
-
-# SQLite file for profiles, sessions and screens (env ERIA_UI_SERVER_DATABASE overrides it)
-database: eria-ui-server.db
-# First admin's PIN, used only while there is no profile (or env ERIA_UI_SERVER_ADMIN_PIN)
-# adminPin: "<4 to 8 digits>"
-# Signed theme archives: <id>.tar + <id>.tar.sig (env ERIA_UI_SERVER_THEMES overrides it)
-themes: themes
+health: 127.0.0.1:8099 # plain HTTP health probe, node only
+# auth's tunnel listener and the house id (aud of the tokens)
+auth: 10.0.0.5:8443
+deployment: eria-maison
+# Files, relative to the folder of env ERIA_UI_SERVER_DATA when set
+cert: relay.crt # role relais-interieur or relais-exterieur, signed by eria-manager tls-sign
+certKey: relay-tls.key # made by eria-ui-server csr
+roots: roots.pem # eria-manager tls-root
+keyset: auth-keyset.json # eria-manager auth-keyset
+themes: themes # signed theme archives: <id>.tar + <id>.tar.sig
 # TD id of service-notices, whose notifications go to the apps
 notices: urn:eria:service:notices
