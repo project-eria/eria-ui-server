@@ -55,19 +55,20 @@ var config = struct {
 const maxBody = 64 << 10
 
 func main() {
+	// The agent gives the app a data folder: the default file names live
+	// there, for the local commands too.
+	if dir := os.Getenv("ERIA_UI_SERVER_DATA"); dir != "" {
+		if err := os.Chdir(dir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "csr" {
 		if err := csr(os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
-	}
-	// The agent gives the app a data folder: the default file names live there.
-	if dir := os.Getenv("ERIA_UI_SERVER_DATA"); dir != "" {
-		if err := os.Chdir(dir); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
 	}
 	eria.Init("ERIA UI server", &config)
 	defer eria.Close()
