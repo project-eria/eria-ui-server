@@ -65,11 +65,10 @@ Besides the channel, HTTP only serves the health probe, in plain HTTP on the nod
 ## Develop
 
 ```sh
-GOWORK=$PWD/../golang/go.work go test ./...
+GOWORK=off go test ./...
 ```
 
-Until go-wot's `auth` package is published, the relay builds within the workspace of
-`../golang/go.work`. Local relay: `config.yml` (from `config.sample.yml`), its TLS files from
+Local relay: `config.yml` (from `config.sample.yml`), its TLS files from
 eria-manager (`eria-ui-server csr`, `tls-sign`, `tls-root`, `auth-keyset`) and a running
 eria-auth.
 
