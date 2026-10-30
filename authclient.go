@@ -38,6 +38,7 @@ type AuthClient struct {
 	keys    auth.KeyLookup
 	revoked auth.Doc
 	config  Config
+	changed func(old, new Config) // set by Run
 }
 
 // Config is what auth keeps for the interfaces (eria-auth config.go).
@@ -147,6 +148,9 @@ func (a *AuthClient) Revokes(c auth.Claims) bool {
 // Run keeps the revocation list and the configuration fresh, calling
 // changed after each new configuration and revoked after each new list.
 func (a *AuthClient) Run(ctx context.Context, changed func(old, new Config), revoked func()) {
+	a.mu.Lock()
+	a.changed = changed
+	a.mu.Unlock()
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for n := 0; ; n++ {
@@ -303,11 +307,23 @@ func (a *AuthClient) ManualURLs() []string {
 	return urls
 }
 
-// Terminal returns what the interfaces show of a terminal.
+// Terminal returns what the interfaces show of a terminal; one not in the
+// last copy (just enrolled) makes the relay read the configuration now.
 func (a *AuthClient) Terminal(id string) TerminalScreen {
-	for _, t := range a.snapshot().Terminals {
-		if t.ID == id {
-			return t
+	for range 2 {
+		for _, t := range a.snapshot().Terminals {
+			if t.ID == id {
+				return t
+			}
+		}
+		a.mu.RLock()
+		changed := a.changed
+		a.mu.RUnlock()
+		if changed == nil {
+			changed = func(old, new Config) {}
+		}
+		if err := a.pollConfig(changed); err != nil {
+			break
 		}
 	}
 	return TerminalScreen{ID: id}
