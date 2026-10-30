@@ -325,6 +325,13 @@ func (s *session) handle(req request) (any, *opError) {
 			return nil, s.authError(err)
 		}
 		return true, nil
+	case "setHomePage":
+		var id string
+		json.Unmarshal(req.Value, &id)
+		if err := s.ch.auth.SetHomePage(token, id); err != nil {
+			return nil, s.authError(err)
+		}
+		return true, nil
 
 	// --- Notifications (notices.go) ---
 	case "notices":

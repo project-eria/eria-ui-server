@@ -330,3 +330,8 @@ func (a *AuthClient) ReportScreen(token, screen string) error {
 	_, err := a.call(http.MethodPost, "/v1/screen", token, map[string]string{"screen": screen}, nil)
 	return err
 }
+
+func (a *AuthClient) SetHomePage(token, id string) error {
+	_, err := a.call(http.MethodPut, "/v1/config/home-page", token, map[string]string{"page": id}, nil)
+	return err
+}

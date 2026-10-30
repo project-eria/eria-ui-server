@@ -34,6 +34,7 @@ The app sends `{"id", "op", …}`; each request gets one reply `{"id", "result"}
 | `pages` | — | every page |
 | `savePage` | `value`: page (no `id` = new, with a known `theme` — `""` = Base; same `version` as stored; `theme`, `aspect`, `layout` fixed after creation) | page, saved by auth (a signed-in person of level ≤ 1) |
 | `deletePage` | `value`: id | `true` (same) |
+| `setHomePage` | `value`: page id, `""` = none | `true`; the house's start page (same) |
 | `read` | `thing`, `name` | value |
 | `write` | `thing`, `name`, `value` | `null` (level < 9) |
 | `invoke` | `thing`, `name`, `value` (input) | output (level < 9) |
