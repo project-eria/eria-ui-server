@@ -65,7 +65,7 @@ Besides the channel, HTTP only serves the health probe, in plain HTTP on the nod
 ## Develop
 
 ```sh
-GOWORK=../golang/go.work go test ./...
+GOWORK=$PWD/../golang/go.work go test ./...
 ```
 
 Until go-wot's `auth` package is published, the relay builds within the workspace of
