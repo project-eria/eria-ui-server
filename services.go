@@ -71,6 +71,8 @@ type Can struct {
 	Read   []string `json:"read"`
 	Write  []string `json:"write"`
 	Invoke []string `json:"invoke"`
+	// Confirm: allowed with a confirmation (Face ID on a phone, §2.8).
+	Confirm []string `json:"confirm"`
 }
 
 const genericCapability = "generic"

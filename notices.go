@@ -47,7 +47,8 @@ func (s *session) notices() (any, *opError) {
 	if !ok {
 		return []any{}, nil // no notices service on the LAN
 	}
-	raw, err := callThing(td, http.MethodGet, href(td.Properties["notices"].Forms, "readproperty"), nil)
+	_, token := s.current()
+	raw, err := callThing(td, http.MethodGet, href(td.Properties["notices"].Forms, "readproperty"), nil, token, "")
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +62,7 @@ func (s *session) notices() (any, *opError) {
 	signedIn := p != nil && p.Sub != "" && profileKey(p) != ""
 	if signedIn {
 		form := href(td.Properties["read"].Forms, "readproperty")
-		raw, err := callThing(td, http.MethodGet, strings.Replace(form, "{profile}", url.PathEscape(profileKey(p)), 1), nil)
+		raw, err := callThing(td, http.MethodGet, strings.Replace(form, "{profile}", url.PathEscape(profileKey(p)), 1), nil, token, "")
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +94,7 @@ func (s *session) notices() (any, *opError) {
 // markRead records the notices as read for the signed-in person, then tells
 // every app (the same person may be on another terminal).
 func (s *session) markRead(req request) (any, *opError) {
-	p, _ := s.current()
+	p, token := s.current()
 	if p == nil || p.Sub == "" || profileKey(p) == "" {
 		return nil, fail(failRefused, "sign in to mark notices as read")
 	}
@@ -106,7 +107,7 @@ func (s *session) markRead(req request) (any, *opError) {
 		return nil, fail(failOffline, "no notices service")
 	}
 	body, _ := json.Marshal(map[string]any{"profile": profileKey(p), "ids": ids})
-	if _, err := callThing(td, http.MethodPost, href(td.Actions["markRead"].Forms, "invokeaction"), body); err != nil {
+	if _, err := callThing(td, http.MethodPost, href(td.Actions["markRead"].Forms, "invokeaction"), body, token, ""); err != nil {
 		return nil, err
 	}
 	// ponytail: every app re-reads its notices; fine for a household

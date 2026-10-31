@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/project-eria/go-wot/auth/authz"
 	zlog "github.com/rs/zerolog/log"
 )
 
@@ -31,6 +32,11 @@ const (
 
 type feedKey struct{ Thing, Kind, Name string }
 
+// function is what an observation reads (§2.4).
+func (k feedKey) function() authz.Function {
+	return authz.Function{Kind: k.Kind, Name: k.Name, Op: authz.Read}
+}
+
 type feed struct {
 	subs   map[*client]bool
 	value  json.RawMessage // last known property value, sent to late subscribers
@@ -43,6 +49,9 @@ type client struct {
 	terminal   string // id of the terminal on the other end ("" before its token)
 	resources  func() // pushes the resource manifest again (channel.go)
 	revalidate func() // closes the connection if its token is now revoked
+	// allowed applies the decision to the app's token before a value goes
+	// out (§3.6); nil: everything.
+	allowed func(feedKey) bool
 }
 
 // pushMsg is a message the server sends without being asked.
@@ -141,7 +150,7 @@ func (h *Hub) follow(c *client, k feedKey) *opError {
 	}
 	f.subs[c] = true
 	c.feeds[k] = true
-	if f.value != nil {
+	if f.value != nil && (c.allowed == nil || c.allowed(k)) {
 		h.pushLocked(c, pushMsg{Push: "value", Thing: k.Thing, Property: k.Name, Value: f.value})
 	}
 	return nil
@@ -236,7 +245,9 @@ func (h *Hub) followUpstream(ctx context.Context, k feedKey) error {
 	} else {
 		url = href(td.Properties[k.Name].Forms, "observeproperty")
 	}
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	header := http.Header{}
+	setBearer(header, serviceToken())
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, header)
 	if err != nil {
 		return err
 	}
@@ -287,6 +298,7 @@ func readValue(ctx context.Context, url string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	setBearer(req.Header, serviceToken())
 	resp, err := upstream.Do(req)
 	if err != nil {
 		return nil, err
@@ -316,7 +328,9 @@ func (h *Hub) publish(k feedKey, value json.RawMessage) {
 	}
 	data, _ := json.Marshal(msg)
 	for c := range f.subs {
-		h.sendLocked(c, data)
+		if c.allowed == nil || c.allowed(k) {
+			h.sendLocked(c, data)
+		}
 	}
 }
 

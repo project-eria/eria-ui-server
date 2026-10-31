@@ -21,11 +21,18 @@ type fakeThing struct {
 	mu        sync.Mutex
 	conns     []*websocket.Conn
 	connected chan struct{}
+	// refuse plays the Thing's decision on a command; confirm is the last
+	// X-Eria-Confirm received.
+	refuse  func(r *http.Request) bool
+	confirm atomic.Value
 }
 
 func (f *fakeThing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !websocket.IsWebSocketUpgrade(r) {
+		f.confirm.Store(r.Header.Get("X-Eria-Confirm"))
 		switch {
+		case r.Method != http.MethodGet && f.refuse != nil && f.refuse(r):
+			http.Error(w, "denied", http.StatusForbidden)
 		case strings.HasSuffix(r.URL.Path, "/forbidden"):
 			http.Error(w, "level too high", http.StatusForbidden)
 		case r.Method == http.MethodPut:
@@ -126,6 +133,19 @@ func TestChannel(t *testing.T) {
 	ws := "ws" + strings.TrimPrefix(up.URL, "http")
 
 	fa := newFakeAuth(t)
+	fa.tables["urn:test"] = auth.Table{
+		"property/temp/read":   {Levels: [3]int{9, 9, 9}},
+		"property/mode/read":   {Levels: [3]int{9, 9, 9}},
+		"property/mode/write":  {Levels: [3]int{1, 1, 0}, Confirm: auth.Never},
+		"action/toggle/invoke": {Levels: [3]int{1, 1, 0}, Confirm: auth.Never},
+		"action/secret/invoke": {Levels: [3]int{1, 1, 1}, Confirm: auth.OutsideRoom},
+		"event/ring/read":      {Levels: [3]int{1, 1, 0}},
+	}
+	// The Thing refuses commands below level 1.
+	thing.refuse = func(r *http.Request) bool {
+		c, _, err := auth.Parse(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), fa.client.keys)
+		return err != nil || *c.Lvl > 1
+	}
 	registry := NewRegistry(nil)
 	td := TD{
 		ID: "urn:test",
@@ -190,7 +210,7 @@ func TestChannel(t *testing.T) {
 		t.Errorf("another terminal's token = %v, want refused", r)
 	}
 
-	// Terminal token: reads, never acts.
+	// Terminal token: reads, never acts (the Thing refuses, on its token).
 	a := dial(salon)
 	a.push("welcome")
 	if r := a.call("read", map[string]any{"thing": "urn:test", "name": "temp"}); r["result"] != float64(42) {
@@ -212,8 +232,11 @@ func TestChannel(t *testing.T) {
 	if r := a.call("write", map[string]any{"thing": "urn:test", "name": "temp", "value": 1}); errType(r) != failRefused {
 		t.Errorf("write read-only = %v, want refused", r)
 	}
-	if r := a.call("invoke", map[string]any{"thing": "urn:test", "name": "secret"}); errType(r) != failRefused {
+	if r := a.call("invoke", map[string]any{"thing": "urn:test", "name": "secret", "confirm": "c"}); errType(r) != failRefused {
 		t.Errorf("Thing answering 403 = %v, want refused", r)
+	}
+	if thing.confirm.Load() != "c" {
+		t.Errorf("X-Eria-Confirm not passed on")
 	}
 	if r := a.call("invoke", map[string]any{"thing": "urn:nope", "name": "toggle"}); errType(r) != failInvalid {
 		t.Errorf("unknown Thing = %v, want invalid", r)
@@ -233,6 +256,9 @@ func TestChannel(t *testing.T) {
 	b.push("welcome")
 	b.call("observe", map[string]any{"thing": "urn:test", "name": "temp"})
 	b.next(isValue(42))
+	if r := b.call("subscribe", map[string]any{"thing": "urn:test", "name": "ring"}); errType(r) != failRefused {
+		t.Errorf("level 9 subscribes to a level 1 event = %v, want refused", r)
+	}
 	thing.emit("43")
 	a.next(isValue(43))
 	b.next(isValue(43))
@@ -283,7 +309,7 @@ func TestChannel(t *testing.T) {
 		t.Errorf("level 9 may invoke %d actions, want 0", n)
 	}
 	if n := invokes(a); n != 2 {
-		t.Errorf("parent may invoke %d actions, want 2", n)
+		t.Errorf("parent may invoke %d actions, want 2 (one with a confirmation)", n)
 	}
 
 	// Last app gone: the upstream sockets are closed.

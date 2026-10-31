@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/project-eria/go-wot/auth"
+	"github.com/project-eria/go-wot/auth/authz"
 	zlog "github.com/rs/zerolog/log"
 )
 
@@ -39,6 +40,9 @@ type request struct {
 	Name   string          `json:"name,omitempty"`  // property, action or event
 	Value  json.RawMessage `json:"value,omitempty"` // value to write, action input, op argument
 	Tunnel int             `json:"tunnel,omitempty"`
+	// Confirm is the confirm token of a confirmed command (§2.8), passed to
+	// the Thing as X-Eria-Confirm.
+	Confirm string `json:"confirm,omitempty"`
 }
 
 type reply struct {
@@ -94,10 +98,11 @@ type session struct {
 	tunnels  map[int]net.Conn
 	nextTun  int
 	inflight chan struct{}
+	rate     *bucket
 }
 
 func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
-	s := &session{ch: ch, inflight: make(chan struct{}, maxInflight), tunnels: map[int]net.Conn{}}
+	s := &session{ch: ch, inflight: make(chan struct{}, maxInflight), tunnels: map[int]net.Conn{}, rate: newBucket(20, 40)}
 	if token := bearer(r); token != "" {
 		c, err := ch.auth.Authenticate(token)
 		if err != nil {
@@ -240,6 +245,13 @@ func (s *session) handle(req request) (any, *opError) {
 	if c == nil {
 		return nil, fail(failRefused, "a token is required")
 	}
+	// Rate limit per connection (G40): the requests that reach a Thing.
+	switch req.Op {
+	case "read", "write", "invoke", "observe", "subscribe":
+		if !s.rate.take() {
+			return nil, fail(failRefused, "too many requests")
+		}
+	}
 
 	switch req.Op {
 	case "reportType":
@@ -251,7 +263,7 @@ func (s *session) handle(req request) (any, *opError) {
 	case "services":
 		services := s.ch.registry.Services()
 		for i := range services {
-			services[i].Can = can(services[i], s.level())
+			services[i].Can = s.can(services[i])
 		}
 		return services, nil
 	case "contexts":
@@ -261,11 +273,8 @@ func (s *session) handle(req request) (any, *opError) {
 		if err != nil {
 			return nil, err
 		}
-		return callThing(td, http.MethodGet, href(p.Forms, "readproperty"), nil)
+		return callThing(td, http.MethodGet, href(p.Forms, "readproperty"), nil, token, "")
 	case "write":
-		if s.level() >= notSignedIn {
-			return nil, fail(failRefused, "not allowed for this profile")
-		}
 		td, p, err := s.property(req)
 		if err != nil {
 			return nil, err
@@ -278,17 +287,14 @@ func (s *session) handle(req request) (any, *opError) {
 		if len(req.Value) == 0 {
 			return nil, fail(failInvalid, "no value")
 		}
-		return callThing(td, http.MethodPut, href(p.Forms, "writeproperty"), req.Value)
+		return callThing(td, http.MethodPut, href(p.Forms, "writeproperty"), req.Value, token, req.Confirm)
 	case "invoke":
-		if s.level() >= notSignedIn {
-			return nil, fail(failRefused, "not allowed for this profile")
-		}
 		td, ok := s.ch.registry.Thing(req.Thing)
 		a, exists := td.Actions[req.Name]
 		if !ok || !exists || !s.visible(req.Thing) {
 			return nil, fail(failInvalid, "unknown Thing or action")
 		}
-		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value)
+		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value, token, req.Confirm)
 
 	// --- Themes (signed: the app checks them, the relay only serves them) ---
 	case "theme":
@@ -350,6 +356,9 @@ func (s *session) handle(req request) (any, *opError) {
 		}
 		if !s.visible(req.Thing) {
 			return nil, fail(failInvalid, "unknown Thing")
+		}
+		if !s.ch.auth.Decide(token, k.Thing, k.function(), true).Allow {
+			return nil, fail(failRefused, "access denied")
 		}
 		if err := s.ch.hub.follow(s.client, k); err != nil {
 			return nil, err
@@ -533,9 +542,9 @@ func (s *session) property(req request) (TD, Property, *opError) {
 	return td, p, nil
 }
 
-// callThing is the single path from the apps to the Things: the place where
-// the person's token will be passed on once the Things check it (§4.7 step 2).
-func callThing(td TD, method, url string, body []byte) (json.RawMessage, *opError) {
+// callThing is the single path from the apps to the Things, with the app's
+// token (and confirm token): the Thing decides (§3.6).
+func callThing(td TD, method, url string, body []byte, token, confirm string) (json.RawMessage, *opError) {
 	if url == "" {
 		return nil, fail(failInvalid, "no HTTP form for this operation")
 	}
@@ -548,6 +557,10 @@ func callThing(td TD, method, url string, body []byte) (json.RawMessage, *opErro
 	}
 	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json") // required by go-wot
+	}
+	setBearer(req.Header, token)
+	if confirm != "" {
+		req.Header.Set("X-Eria-Confirm", confirm)
 	}
 	resp, err := upstream.Do(req)
 	if err != nil {
@@ -573,24 +586,34 @@ func callThing(td TD, method, url string, body []byte) (json.RawMessage, *opErro
 	return data, nil
 }
 
-// can is the provisional rule until auth computes it with authz (lot 19):
-// reading for everyone, commands for every signed-in level below 9.
-func can(svc Service, level int) *Can {
-	c := &Can{Read: []string{}, Write: []string{}, Invoke: []string{}}
-	for name, p := range svc.Properties {
-		c.Read = append(c.Read, name)
-		if level < notSignedIn && !p.ReadOnly {
-			c.Write = append(c.Write, name)
+// can tells the app what the viewer may do on a service (display only: the
+// Thing decides), by the same decision on the viewer's token; Confirm lists
+// the commands allowed with a confirmation (§2.8).
+func (s *session) can(svc Service) *Can {
+	_, token := s.current()
+	c := &Can{Read: []string{}, Write: []string{}, Invoke: []string{}, Confirm: []string{}}
+	check := func(f authz.Function, list *[]string) {
+		d := s.ch.auth.Decide(token, svc.Thing, f, true)
+		if d.Allow || d.Confirm {
+			*list = append(*list, f.Name)
+		}
+		if d.Confirm {
+			c.Confirm = append(c.Confirm, f.Name)
 		}
 	}
-	if level < notSignedIn {
-		for name := range svc.Actions {
-			c.Invoke = append(c.Invoke, name)
+	for name, p := range svc.Properties {
+		check(authz.Function{Kind: "property", Name: name, Op: authz.Read}, &c.Read)
+		if !p.ReadOnly {
+			check(authz.Function{Kind: "property", Name: name, Op: authz.Write}, &c.Write)
 		}
+	}
+	for name := range svc.Actions {
+		check(authz.Function{Kind: "action", Name: name, Op: authz.Invoke}, &c.Invoke)
 	}
 	slices.Sort(c.Read)
 	slices.Sort(c.Write)
 	slices.Sort(c.Invoke)
+	slices.Sort(c.Confirm)
 	return c
 }
 

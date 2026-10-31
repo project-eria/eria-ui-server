@@ -29,13 +29,14 @@ type fakeAuth struct {
 	config Config
 	revoke []auth.Revocation
 	saved  []string // tokens that saved a page
+	tables map[string]auth.Table
 	client *AuthClient
 }
 
 func newFakeAuth(t *testing.T) *fakeAuth {
 	pubRaw, priv, _ := ed25519.GenerateKey(rand.Reader)
 	pub, _ := auth.ParsePublicKey(auth.Ed25519, pubRaw)
-	f := &fakeAuth{t: t, priv: priv, pub: pub, config: Config{Version: 1}}
+	f := &fakeAuth{t: t, priv: priv, pub: pub, config: Config{Version: 1}, tables: map[string]auth.Table{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	target, _ := url.Parse(srv.URL)
@@ -52,7 +53,7 @@ func newFakeAuth(t *testing.T) *fakeAuth {
 		}
 	}()
 
-	f.client = &AuthClient{aud: "eria-maison", now: time.Now,
+	f.client = &AuthClient{aud: "eria-maison", now: time.Now, rights: rights{tables: map[string]*heldTable{}},
 		keys: func(kid string) (auth.PublicKey, bool, bool) { return pub, false, kid == pub.KID() },
 		http: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 			r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
@@ -94,6 +95,17 @@ func randomHex() string {
 func (f *fakeAuth) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if thing, ok := strings.CutPrefix(r.URL.Path, "/v1/tables/"); ok {
+		table, ok := f.tables[thing]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		doc, _ := auth.SignDoc(f.priv, f.pub.KID(), auth.Doc{Iss: "auth", Aud: "eria-maison",
+			Doc: auth.DocTable, Thing: thing, Version: time.Now().UnixNano(), Table: table})
+		json.NewEncoder(w).Encode(map[string]string{"doc": doc})
+		return
+	}
 	switch r.URL.Path {
 	case "/v1/config":
 		json.NewEncoder(w).Encode(f.config)

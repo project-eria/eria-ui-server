@@ -192,7 +192,12 @@ func (r *Registry) hiddenLocked(id string) bool {
 
 func fetchTD(url string) (TD, json.RawMessage, error) {
 	var td TD
-	resp, err := upstream.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return td, nil, err
+	}
+	setBearer(req.Header, serviceToken())
+	resp, err := upstream.Do(req)
 	if err != nil {
 		return td, nil, err
 	}

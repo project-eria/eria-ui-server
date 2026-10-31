@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
@@ -39,6 +40,7 @@ type AuthClient struct {
 	revoked auth.Doc
 	config  Config
 	changed func(old, new Config) // set by Run
+	rights  rights
 }
 
 // Config is what auth keeps for the interfaces (eria-auth config.go).
@@ -88,7 +90,8 @@ func NewAuthClient(addr, aud string, cert tls.Certificate, rootsPEM []byte, keys
 	if len(deploy) == 0 {
 		return nil, errors.New("no deployment root")
 	}
-	a := &AuthClient{aud: aud, now: time.Now}
+	a := &AuthClient{aud: aud, now: time.Now, rights: rights{tables: map[string]*heldTable{}}}
+	a.rights.key, _ = cert.PrivateKey.(*ecdsa.PrivateKey)
 	a.dial = func(ctx context.Context) (net.Conn, error) {
 		d := tls.Dialer{Config: &tls.Config{RootCAs: roots, ServerName: "auth", Certificates: []tls.Certificate{cert},
 			MinVersion: tls.VersionTLS13}}

@@ -86,6 +86,7 @@ func main() {
 		zlog.Fatal().Err(err).Msg("[main] Can't reach auth")
 	}
 
+	serviceToken = auth.ServiceToken
 	registry := NewRegistry(nil)
 	ctx, stop := context.WithCancel(context.Background())
 	go func() {
