@@ -575,7 +575,7 @@ func callThing(td TD, method, url string, body []byte, token, confirm string) (j
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, fail(failRefused, strings.TrimSpace(string(data)))
+		return nil, fail(failRefused, "access denied") // the Thing says no more (§2.9)
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		return nil, fail(failInvalid, strings.TrimSpace(string(data)))
 	case resp.StatusCode >= 500:
