@@ -6,7 +6,7 @@ require (
 	github.com/brutella/dnssd v1.2.14
 	github.com/gorilla/websocket v1.5.3
 	github.com/project-eria/eria-core v1.18.0
-	github.com/project-eria/go-wot v1.11.0
+	github.com/project-eria/go-wot v1.12.0
 	github.com/rs/zerolog v1.35.1
 )
 
