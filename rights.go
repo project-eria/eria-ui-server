@@ -41,6 +41,7 @@ type rights struct {
 
 	mu      sync.Mutex
 	token   string
+	iat     time.Time
 	exp     time.Time
 	tables  map[string]*heldTable
 	refresh sync.Mutex // one service token request at a time
@@ -52,10 +53,14 @@ type heldTable struct {
 	fetching bool
 }
 
-// ServiceToken returns the relay's token, renewed 30 min before its end.
+// ServiceToken returns the relay's token, renewed every minute: its grants
+// follow the rooms of the adopted Things, which the admin changes at any time.
+// ponytail: renewal by age, a push from auth when the grants change if the
+// minute matters.
 func (a *AuthClient) ServiceToken() string {
 	a.rights.mu.Lock()
-	token, fresh := a.rights.token, a.now().Before(a.rights.exp.Add(-30*time.Minute))
+	now := a.now()
+	token, fresh := a.rights.token, now.Before(a.rights.iat.Add(time.Minute)) && now.Before(a.rights.exp.Add(-30*time.Minute))
 	a.rights.mu.Unlock()
 	if fresh || a.rights.key == nil {
 		return token
@@ -92,7 +97,7 @@ func (a *AuthClient) newServiceToken() (string, error) {
 		return "", err
 	}
 	a.rights.mu.Lock()
-	a.rights.token, a.rights.exp = out.Token, time.Unix(c.Exp, 0)
+	a.rights.token, a.rights.iat, a.rights.exp = out.Token, time.Unix(c.Iat, 0), time.Unix(c.Exp, 0)
 	a.rights.mu.Unlock()
 	return out.Token, nil
 }
