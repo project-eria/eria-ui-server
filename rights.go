@@ -60,7 +60,7 @@ type heldTable struct {
 func (a *AuthClient) ServiceToken() string {
 	a.rights.mu.Lock()
 	now := a.now()
-	token, fresh := a.rights.token, now.Before(a.rights.iat.Add(time.Minute)) && now.Before(a.rights.exp.Add(-30*time.Minute))
+	token, fresh := a.rights.token, now.Before(a.rights.iat.Add(time.Minute)) && now.Before(a.rights.exp.Add(-5*time.Minute))
 	a.rights.mu.Unlock()
 	if fresh || a.rights.key == nil {
 		return token
