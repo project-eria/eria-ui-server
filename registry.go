@@ -196,7 +196,7 @@ func fetchTD(url string) (TD, json.RawMessage, error) {
 	if err != nil {
 		return td, nil, err
 	}
-	setBearer(req.Header, serviceToken())
+	setBearer(req.Header, tokenFor(url))
 	resp, err := upstream.Do(req)
 	if err != nil {
 		return td, nil, err

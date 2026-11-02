@@ -246,7 +246,7 @@ func (h *Hub) followUpstream(ctx context.Context, k feedKey) error {
 		url = href(td.Properties[k.Name].Forms, "observeproperty")
 	}
 	header := http.Header{}
-	setBearer(header, serviceToken())
+	setBearer(header, tokenFor(url))
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, header)
 	if err != nil {
 		return err
@@ -298,7 +298,7 @@ func readValue(ctx context.Context, url string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	setBearer(req.Header, serviceToken())
+	setBearer(req.Header, tokenFor(url))
 	resp, err := upstream.Do(req)
 	if err != nil {
 		return nil, err

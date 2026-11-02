@@ -9,13 +9,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"io"
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -49,6 +49,9 @@ var config = struct {
 	CertKey    string `yaml:"certKey" default:"relay-tls.key"`
 	Roots      string `yaml:"roots" default:"roots.pem"`
 	Keyset     string `yaml:"keyset" default:"auth-keyset.json"`
+	// Master's TD URL: its inventory lists the Things (F037). Empty: mDNS,
+	// and no service token sent.
+	Master string `yaml:"master"`
 }{}
 
 // maxBody bounds the JSON values exchanged with a Thing.
@@ -89,11 +92,16 @@ func main() {
 	serviceToken = auth.ServiceToken
 	registry := NewRegistry(nil)
 	ctx, stop := context.WithCancel(context.Background())
-	go func() {
-		if err := registry.Discover(ctx); err != nil {
-			zlog.Fatal().Err(err).Msg("[main] mDNS discovery failed")
-		}
-	}()
+	if config.Master != "" {
+		go registry.Follow(ctx, config.Master)
+	} else {
+		zlog.Warn().Msg("[main] No master: Things found by mDNS, no service token sent")
+		go func() {
+			if err := registry.Discover(ctx); err != nil {
+				zlog.Fatal().Err(err).Msg("[main] mDNS discovery failed")
+			}
+		}()
+	}
 
 	go registry.Poll(ctx, auth.ManualURLs)
 	hub := NewHub(registry)
