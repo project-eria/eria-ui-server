@@ -37,7 +37,7 @@ func TestFollowInventory(t *testing.T) {
 	r := NewRegistry(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go r.Follow(ctx, master.URL+"/")
+	go r.Follow(ctx, master.URL+"/", nil)
 	require.Eventually(t, func() bool { return len(r.Things()) == 1 }, 2*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "rdc", r.Things()[0].Node)
 	assert.Equal(t, "Bearer svc", <-gotToken, "a Thing of the inventory gets the service token")

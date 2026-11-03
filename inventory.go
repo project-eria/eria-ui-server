@@ -36,12 +36,18 @@ func tokenFor(url string) string {
 
 // Follow reads the master's inventory every browse round (10 s) until ctx is
 // done, as Discover would announce the Things.
-func (r *Registry) Follow(ctx context.Context, master string) {
+// The master is reached with its certificate checked against the deployment
+// roots (role maitre) once it serves HTTPS (AUTH-DESIGN §4.7 step 5d).
+func (r *Registry) Follow(ctx context.Context, master string, roots []byte) {
+	client, err := inventory.MasterClient(roots, 5*time.Second)
+	if err != nil {
+		zlog.Fatal().Err(err).Msg("[inventory] Bad deployment roots")
+	}
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
 		if token := serviceToken(); token != "" {
-			list, err := inventory.Read(ctx, upstream, master, token)
+			list, err := inventory.Read(ctx, client, master, token)
 			if err != nil {
 				zlog.Warn().Err(err).Msg("[inventory] Can't read the master's inventory, the last one kept")
 			} else {

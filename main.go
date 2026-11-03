@@ -93,7 +93,7 @@ func main() {
 	registry := NewRegistry(nil)
 	ctx, stop := context.WithCancel(context.Background())
 	if config.Master != "" {
-		go registry.Follow(ctx, config.Master)
+		go registry.Follow(ctx, config.Master, roots)
 	} else {
 		zlog.Warn().Msg("[main] No master: Things found by mDNS, no service token sent")
 		go func() {
