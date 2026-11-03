@@ -18,6 +18,10 @@ import (
 // Hub multiplexes observations: every app holds one WebSocket (channel.go),
 // and each observed property or subscribed event of a Thing has a single
 // upstream WebSocket, shared by all apps and closed when nobody follows it.
+// When the Thing refuses the observation (its minimal mode, a revocation,
+// AUTH-DESIGN §3.6, G07), a property is read every pollEvery with each
+// app's own token instead, the value marked polled (« sans flux »), and the
+// observation tried again every retryObserve.
 type Hub struct {
 	registry *Registry
 	mu       sync.Mutex
@@ -52,6 +56,7 @@ type client struct {
 	// allowed applies the decision to the app's token before a value goes
 	// out (§3.6); nil: everything.
 	allowed func(feedKey) bool
+	token   func() string // the app's current token, for the polled reads
 }
 
 // pushMsg is a message the server sends without being asked.
@@ -62,6 +67,9 @@ type pushMsg struct {
 	Event    string          `json:"event,omitempty"`
 	Value    json.RawMessage `json:"value,omitempty"` // property value or event data
 	Online   *bool           `json:"online,omitempty"`
+	// Polled: read periodically with the app's token, not observed (« sans
+	// flux »), fresh at the time of the push.
+	Polled bool `json:"polled,omitempty"`
 }
 
 const (
@@ -74,9 +82,11 @@ const (
 
 // Overridable by tests.
 var (
-	retryMin    = time.Second
-	retryMax    = 30 * time.Second
-	statusEvery = 5 * time.Second
+	retryMin     = time.Second
+	retryMax     = 30 * time.Second
+	statusEvery  = 5 * time.Second
+	pollEvery    = 10 * time.Second
+	retryObserve = time.Minute // the relay's token is fresh every minute
 )
 
 // Default CheckOrigin rejects cross-origin pages (CSWSH); the app's Rust
@@ -86,6 +96,7 @@ var upgrader = websocket.Upgrader{}
 var (
 	errUnknownThing = errors.New("unknown Thing")
 	errBadValue     = errors.New("can't read current value")
+	errRefusedFeed  = errors.New("observation refused by the Thing")
 )
 
 func NewHub(registry *Registry) *Hub {
@@ -220,7 +231,13 @@ func (h *Hub) keepFollowing(ctx context.Context, k feedKey) {
 	wait := retryMin
 	for ctx.Err() == nil {
 		start := time.Now()
-		if err := h.followUpstream(ctx, k); err != nil && ctx.Err() == nil {
+		err := h.followUpstream(ctx, k)
+		if errors.Is(err, errRefusedFeed) && k.Kind == kindProperty {
+			zlog.Info().Str("thing", k.Thing).Str(k.Kind, k.Name).Msg("[hub:keepFollowing] observation refused, polling")
+			h.poll(ctx, k)
+			continue
+		}
+		if err != nil && ctx.Err() == nil {
 			zlog.Debug().Err(err).Str("thing", k.Thing).Str(k.Kind, k.Name).Msg("[hub:keepFollowing] upstream lost")
 		}
 		if time.Since(start) > retryMax {
@@ -247,8 +264,11 @@ func (h *Hub) followUpstream(ctx context.Context, k feedKey) error {
 	}
 	header := http.Header{}
 	setBearer(header, tokenFor(url))
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, header)
+	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, url, header)
 	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return errRefusedFeed
+		}
 		return err
 	}
 	defer conn.Close()
@@ -293,12 +313,48 @@ func keepAlive(ctx context.Context, conn *websocket.Conn) {
 	}
 }
 
+// poll reads a refused observation's property with each app's own token,
+// every pollEvery, until retryObserve has passed (or ctx ends).
+func (h *Hub) poll(ctx context.Context, k feedKey) {
+	deadline := time.Now().Add(retryObserve)
+	for ctx.Err() == nil && time.Now().Before(deadline) {
+		if td, ok := h.registry.Thing(k.Thing); ok {
+			url := href(td.Properties[k.Name].Forms, "readproperty")
+			h.mu.Lock()
+			var subs []*client
+			if f := h.feeds[k]; f != nil {
+				for c := range f.subs {
+					subs = append(subs, c)
+				}
+			}
+			h.mu.Unlock()
+			for _, c := range subs {
+				if c.token == nil || (c.allowed != nil && !c.allowed(k)) {
+					continue
+				}
+				if v, err := readWith(ctx, url, c.token()); err == nil {
+					h.push(c, pushMsg{Push: "value", Thing: k.Thing, Property: k.Name, Value: v, Polled: true})
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(pollEvery):
+		}
+	}
+}
+
+// readValue reads a property with the relay's own token.
 func readValue(ctx context.Context, url string) (json.RawMessage, error) {
+	return readWith(ctx, url, tokenFor(url))
+}
+
+func readWith(ctx context.Context, url, token string) (json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	setBearer(req.Header, tokenFor(url))
+	setBearer(req.Header, token)
 	resp, err := upstream.Do(req)
 	if err != nil {
 		return nil, err

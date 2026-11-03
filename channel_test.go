@@ -25,11 +25,18 @@ type fakeThing struct {
 	// X-Eria-Confirm received.
 	refuse  func(r *http.Request) bool
 	confirm atomic.Value
+	// refuseObserve plays a Thing in minimal mode: no observation; bearer
+	// is the token of the last read.
+	refuseObserve atomic.Bool
+	bearer        atomic.Value
 }
 
 func (f *fakeThing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !websocket.IsWebSocketUpgrade(r) {
 		f.confirm.Store(r.Header.Get("X-Eria-Confirm"))
+		if r.Method == http.MethodGet {
+			f.bearer.Store(r.Header.Get("Authorization"))
+		}
 		switch {
 		case r.Method != http.MethodGet && f.refuse != nil && f.refuse(r):
 			http.Error(w, "denied", http.StatusForbidden)
@@ -42,6 +49,10 @@ func (f *fakeThing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			w.Write([]byte("42"))
 		}
+		return
+	}
+	if f.refuseObserve.Load() {
+		http.Error(w, "minimal mode", http.StatusUnauthorized)
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -135,6 +146,7 @@ func TestChannel(t *testing.T) {
 	fa := newFakeAuth(t)
 	fa.tables["urn:test"] = auth.Table{
 		"property/temp/read":   {Levels: [3]int{9, 9, 9}},
+		"property/hum/read":    {Levels: [3]int{9, 9, 9}},
 		"property/mode/read":   {Levels: [3]int{9, 9, 9}},
 		"property/mode/write":  {Levels: [3]int{1, 1, 0}, Confirm: auth.Never},
 		"action/toggle/invoke": {Levels: [3]int{1, 1, 0}, Confirm: auth.Never},
@@ -155,6 +167,10 @@ func TestChannel(t *testing.T) {
 				{Href: up.URL + "/temp", Op: []any{"readproperty"}},
 			}},
 			"mode": {Forms: []Form{{Href: up.URL + "/mode", Op: []any{"readproperty", "writeproperty"}}}},
+			"hum": {Observable: true, ReadOnly: true, Forms: []Form{
+				{Href: ws + "/hum", Op: []any{"observeproperty"}},
+				{Href: up.URL + "/hum", Op: []any{"readproperty"}},
+			}},
 		},
 		Actions: map[string]Action{
 			"toggle": {Forms: []Form{{Href: up.URL + "/toggle", Op: "invokeaction"}}},
@@ -252,7 +268,8 @@ func TestChannel(t *testing.T) {
 	a.call("observe", map[string]any{"thing": "urn:test", "name": "temp"})
 	<-thing.connected
 	a.next(isValue(42))
-	b := dial(fa.token("entree", "", 9, time.Hour))
+	entree := fa.token("entree", "", 9, time.Hour)
+	b := dial(entree)
 	b.push("welcome")
 	b.call("observe", map[string]any{"thing": "urn:test", "name": "temp"})
 	b.next(isValue(42))
@@ -273,6 +290,21 @@ func TestChannel(t *testing.T) {
 	a.next(func(m map[string]any) bool {
 		return m["push"] == "event" && m["event"] == "ring" && m["value"] == "ding"
 	})
+
+	// The Thing refuses the observation (minimal mode, step 5b-2): read
+	// periodically with the app's own token, marked polled; observed again
+	// once the Thing takes it.
+	pollEvery, retryObserve = 20*time.Millisecond, 150*time.Millisecond
+	thing.refuseObserve.Store(true)
+	b.call("observe", map[string]any{"thing": "urn:test", "name": "hum"})
+	b.next(func(m map[string]any) bool { return m["property"] == "hum" && m["polled"] == true && m["value"] == float64(42) })
+	if got := thing.bearer.Load(); got != "Bearer "+entree {
+		t.Errorf("polled with %v, want the app's token", got)
+	}
+	thing.refuseObserve.Store(false)
+	<-thing.connected
+	thing.emit("44")
+	b.next(func(m map[string]any) bool { return m["property"] == "hum" && m["polled"] == nil && m["value"] == float64(44) })
 
 	// Pages: auth decides on the person's token, every app gets the new version.
 	page := map[string]any{"title": "Entrée", "layout": "grid", "elements": []map[string]any{
@@ -315,6 +347,7 @@ func TestChannel(t *testing.T) {
 	// Last app gone: the upstream sockets are closed.
 	a.conn.Close()
 	b.call("unobserve", map[string]any{"thing": "urn:test", "name": "temp"})
+	b.call("unobserve", map[string]any{"thing": "urn:test", "name": "hum"})
 	deadline := time.Now().Add(2 * time.Second)
 	for thing.open.Load() != 0 {
 		if time.Now().After(deadline) {

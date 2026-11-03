@@ -123,6 +123,7 @@ func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
 	s.client = ch.hub.attach(term)
 	ch.hub.mu.Lock()
 	s.client.revalidate = s.revalidate
+	s.client.token = func() string { _, t := s.current(); return t }
 	ch.hub.mu.Unlock()
 	go ch.hub.writeLoop(conn, s.client)
 	s.welcome()
