@@ -1,6 +1,8 @@
 package main
 
 import (
+	"slices"
+	"context"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -144,6 +146,19 @@ func TestChannel(t *testing.T) {
 	ws := "ws" + strings.TrimPrefix(up.URL, "http")
 
 	fa := newFakeAuth(t)
+	var linesMu sync.Mutex
+	var lines []string // what the relay hands auth's journal (step 5e-3)
+	fa.client.journal = auth.NewJournal(func(b auth.JournalBatch) error {
+		linesMu.Lock()
+		defer linesMu.Unlock()
+		for _, l := range b.Lines {
+			lines = append(lines, strings.TrimSpace(l.Type+" "+l.Reason+" "+l.Object))
+		}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fa.client.journal.Run(ctx)
 	fa.tables["urn:test"] = auth.Table{
 		"property/temp/read":   {Levels: [3]int{9, 9, 9}},
 		"property/hum/read":    {Levels: [3]int{9, 9, 9}},
@@ -224,6 +239,17 @@ func TestChannel(t *testing.T) {
 	n.push("resources")
 	if r := n.call("token", map[string]any{"value": fa.token("cuisine", "", 9, time.Hour)}); errType(r) != failRefused {
 		t.Errorf("another terminal's token = %v, want refused", r)
+	}
+	if r := n.call("subscribe", map[string]any{"thing": "urn:test", "name": "ring"}); errType(r) != failRefused {
+		t.Errorf("subscribe at level 9 = %v, want refused", r)
+	}
+	journaled := func() []string { linesMu.Lock(); defer linesMu.Unlock(); return slices.Clone(lines) }
+	want := []string{"relay.refused token", "relay.connect", "relay.refused terminal", "relay.denied step 7 urn:test"}
+	for deadline := time.Now().Add(time.Second); len(journaled()) < len(want) && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := journaled(); !slices.Equal(got[:min(len(got), len(want))], want) {
+		t.Errorf("journal = %v, want %v first", got, want)
 	}
 
 	// Terminal token: reads, never acts (the Thing refuses, on its token).

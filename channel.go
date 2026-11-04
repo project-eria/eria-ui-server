@@ -99,6 +99,19 @@ type session struct {
 	nextTun  int
 	inflight chan struct{}
 	rate     *bucket
+	rateLog  time.Time // last « too many requests » journaled, one a minute (mu)
+}
+
+// logLine journals what this connection did (step 5e-3): who by its token.
+func (s *session) logLine(l auth.Line) {
+	if c, _ := s.current(); c != nil {
+		l.Subject, l.Jti = c.Sub, c.Jti
+		if l.Subject == "" {
+			l.Subject = "term:" + c.Term
+		}
+		l.Detail = strings.TrimSpace("term:" + c.Term + " " + l.Detail)
+	}
+	s.ch.auth.Log(l)
 }
 
 func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -106,10 +119,12 @@ func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
 	if token := bearer(r); token != "" {
 		c, err := ch.auth.Authenticate(token)
 		if err != nil {
+			ch.auth.Log(auth.Line{Type: "relay.refused", Result: "denied", Reason: "token"})
 			http.Error(w, "token refused", http.StatusUnauthorized)
 			return
 		}
 		s.claims, s.token = &c, token
+		s.logLine(auth.Line{Type: "relay.connect"})
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -128,6 +143,9 @@ func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
 	go ch.hub.writeLoop(conn, s.client)
 	s.welcome()
 	s.readLoop(conn)
+	if s.claims != nil {
+		s.logLine(auth.Line{Type: "relay.close"})
+	}
 	s.closeTunnels()
 	if s.expiry != nil {
 		s.expiry.Stop()
@@ -250,6 +268,15 @@ func (s *session) handle(req request) (any, *opError) {
 	switch req.Op {
 	case "read", "write", "invoke", "observe", "subscribe":
 		if !s.rate.take() {
+			s.mu.Lock()
+			log := time.Since(s.rateLog) >= time.Minute
+			if log {
+				s.rateLog = time.Now()
+			}
+			s.mu.Unlock()
+			if log {
+				s.logLine(auth.Line{Type: "relay.ratelimit", Result: "denied", Reason: "rate"})
+			}
 			return nil, fail(failRefused, "too many requests")
 		}
 	}
@@ -358,7 +385,9 @@ func (s *session) handle(req request) (any, *opError) {
 		if !s.visible(req.Thing) {
 			return nil, fail(failInvalid, "unknown Thing")
 		}
-		if !s.ch.auth.Decide(token, k.Thing, k.function(), true).Allow {
+		if d := s.ch.auth.Decide(token, k.Thing, k.function(), true); !d.Allow {
+			s.logLine(auth.Line{Type: "relay.denied", Object: k.Thing, Result: "denied", Reason: "step " + strconv.Itoa(d.Step),
+				Detail: k.Kind + " " + k.Name + ": " + d.Reason})
 			return nil, fail(failRefused, "access denied")
 		}
 		if err := s.ch.hub.follow(s.client, k); err != nil {
@@ -393,12 +422,14 @@ func (s *session) setToken(req request) (any, *opError) {
 	json.Unmarshal(req.Value, &token)
 	c, err := s.ch.auth.Authenticate(token)
 	if err != nil {
+		s.logLine(auth.Line{Type: "relay.refused", Result: "denied", Reason: "token"})
 		return nil, fail(failRefused, "token refused")
 	}
 	s.mu.Lock()
 	first := s.claims == nil
 	if !first && s.claims.Term != c.Term {
 		s.mu.Unlock()
+		s.logLine(auth.Line{Type: "relay.refused", Result: "denied", Reason: "terminal"})
 		return nil, fail(failRefused, "another terminal's token")
 	}
 	changed := first || s.claims.Sub != c.Sub || *s.claims.Lvl != *c.Lvl
@@ -408,6 +439,7 @@ func (s *session) setToken(req request) (any, *opError) {
 		s.ch.hub.mu.Lock()
 		s.client.terminal = c.Term
 		s.ch.hub.mu.Unlock()
+		s.logLine(auth.Line{Type: "relay.connect"})
 	}
 	if changed {
 		s.welcome()

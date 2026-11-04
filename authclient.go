@@ -41,6 +41,7 @@ type AuthClient struct {
 	config  Config
 	changed func(old, new Config) // set by Run
 	rights  rights
+	journal *auth.Journal // lines for auth's journal (§4.5); nil in tests
 }
 
 // Config is what auth keeps for the interfaces (eria-auth config.go).
@@ -92,6 +93,7 @@ func NewAuthClient(addr, aud string, cert tls.Certificate, rootsPEM []byte, keys
 	}
 	a := &AuthClient{aud: aud, now: time.Now, rights: rights{tables: map[string]*heldTable{}}}
 	a.rights.key, _ = cert.PrivateKey.(*ecdsa.PrivateKey)
+	a.journal = auth.NewJournal(a.sendJournal)
 	a.dial = func(ctx context.Context) (net.Conn, error) {
 		d := tls.Dialer{Config: &tls.Config{RootCAs: roots, ServerName: "auth", Certificates: []tls.Certificate{cert},
 			MinVersion: tls.VersionTLS13}}
@@ -154,6 +156,9 @@ func (a *AuthClient) Run(ctx context.Context, changed func(old, new Config), rev
 	a.mu.Lock()
 	a.changed = changed
 	a.mu.Unlock()
+	if a.journal != nil {
+		go a.journal.Run(ctx)
+	}
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for n := 0; ; n++ {
@@ -210,6 +215,27 @@ func (a *AuthClient) pollRevocations(revoked func()) error {
 	a.mu.Unlock()
 	revoked()
 	return nil
+}
+
+// Log queues a line for auth's journal (step 5e-3), never blocking.
+func (a *AuthClient) Log(l auth.Line) {
+	if a.journal != nil {
+		a.journal.Add(l)
+	}
+}
+
+// sendJournal hands auth a batch of lines, signed by the certificate key:
+// auth tells the relay's own batches from the apps' requests it carries.
+func (a *AuthClient) sendJournal(b auth.JournalBatch) error {
+	if a.rights.key == nil {
+		return errors.New("no P-256 certificate key")
+	}
+	doc, err := auth.SignDocumentP256(a.rights.key, auth.JournalPrefix, b)
+	if err != nil {
+		return err
+	}
+	_, err = a.call(http.MethodPost, "/v1/relay/journal", "", doc, nil)
+	return err
 }
 
 // call sends one request to auth, with an app's token when given, and
