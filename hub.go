@@ -264,7 +264,7 @@ func (h *Hub) followUpstream(ctx context.Context, k feedKey) error {
 	}
 	header := http.Header{}
 	setBearer(header, tokenFor(url))
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, url, header)
+	conn, resp, err := upstreamWS.DialContext(ctx, url, header)
 	if err != nil {
 		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 			return errRefusedFeed

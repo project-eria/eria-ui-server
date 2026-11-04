@@ -84,6 +84,9 @@ func main() {
 	if err != nil {
 		zlog.Fatal().Err(err).Msg("[main] No deployment roots (eria-manager tls-root)")
 	}
+	if err := useMasterTLS(roots); err != nil {
+		zlog.Fatal().Err(err).Msg("[main] Bad deployment roots")
+	}
 	auth, err := NewAuthClient(config.Auth, config.Deployment, cert, roots, config.Keyset)
 	if err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Can't reach auth")

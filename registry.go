@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	eria "github.com/project-eria/eria-core"
+	"github.com/project-eria/go-wot/inventory"
 	"github.com/project-eria/go-wot/protocolDnssd"
 	zlog "github.com/rs/zerolog/log"
 )
@@ -25,7 +27,26 @@ const (
 	tdRefresh = 5 * time.Minute
 )
 
-var upstream = &http.Client{Timeout: 5 * time.Second}
+// upstream and upstreamWS reach the Things: the master over https is
+// checked against the deployment roots (useMasterTLS).
+var (
+	upstream   = &http.Client{Timeout: 5 * time.Second}
+	upstreamWS = &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 45 * time.Second}
+)
+
+// useMasterTLS makes every https Thing be checked as the master (AUTH-DESIGN
+// §4.7 5d): its certificate, from the deployment roots, names "maitre".
+// ponytail: one name for every https Thing, the master being the only one;
+// a name per role when the apps serve TLS.
+func useMasterTLS(roots []byte) error {
+	client, err := inventory.MasterClient(roots, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	upstream = client
+	upstreamWS.TLSClientConfig = client.Transport.(*http.Transport).TLSClientConfig
+	return nil
+}
 
 type thingEntry struct {
 	td      TD
