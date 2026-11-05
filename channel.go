@@ -298,7 +298,7 @@ func (s *session) pushResources() {
 		themes = append(themes, map[string]string{"id": id, "hash": themeHash(s.ch.themes, id)})
 	}
 	s.ch.hub.push(s.client, map[string]any{"push": "resources", "pages": pages, "themes": themes,
-		"homePage": s.ch.auth.HomePage()})
+		"homePage": s.ch.auth.HomePage(), "release": releasePush()})
 }
 
 // current returns the accepted claims and token, nil when the app holds

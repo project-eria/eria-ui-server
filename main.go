@@ -131,6 +131,9 @@ func main() {
 	if err := ch.place(cert, config.InsideNets, config.OuterURL); err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Bad certificate role or insideNets")
 	}
+	if config.Master != "" && !ch.outer {
+		go followRelease(ctx, config.Master, roots, func() { hub.refresh("") })
+	}
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Handler: newMux(ch),
@@ -163,6 +166,9 @@ func newMux(ch *Channel) *http.ServeMux {
 	mux.HandleFunc("GET /api/ws", ch.ServeWS)
 
 	mux.HandleFunc("GET /api/health", healthHandler)
+	// The app's updater (release.go): the manifest, then the package.
+	mux.HandleFunc("GET /api/release/{target}", ch.serveRelease)
+	mux.HandleFunc("GET /api/release/{target}/{what}", ch.serveRelease)
 	return mux
 }
 
