@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,6 +87,61 @@ type Channel struct {
 	themes   string // folder of the signed theme archives
 	// TD id of service-notices
 	noticesThing string
+	// The two eria-ui-server (AUTH-DESIGN §2.3, §3.6): the outer one, reached
+	// from the VPN, takes no write of the pages; the inner one only takes
+	// connections from the house's networks (a second check behind the
+	// firewall), and tells the apps where the outer one is.
+	outer    bool
+	inside   []netip.Prefix // inner only; none: every address (warned at start)
+	outerURL string         // inner only; "" none
+}
+
+// place reads the server's side from its certificate's role, never from
+// the config: relais-exterieur is the outer one.
+func (ch *Channel) place(cert tls.Certificate, inside []string, outerURL string) error {
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return err
+	}
+	switch {
+	case slices.Contains(leaf.DNSNames, roleOuter):
+		ch.outer = true
+		zlog.Info().Msg("[channel] Outer eria-ui-server: reached from the VPN, no page written")
+		return nil
+	case !slices.Contains(leaf.DNSNames, roleInner):
+		return errors.New("the certificate is for neither " + roleInner + " nor " + roleOuter)
+	}
+	for _, n := range inside {
+		p, err := netip.ParsePrefix(n)
+		if err != nil {
+			return err
+		}
+		ch.inside = append(ch.inside, p.Masked())
+	}
+	if len(ch.inside) == 0 {
+		zlog.Warn().Msg("[channel] No insideNets: connections taken from every address, the firewall only decides")
+	}
+	ch.outerURL = outerURL
+	return nil
+}
+
+// Roles of the two eria-ui-server's certificates (eria-manager tls-sign).
+const (
+	roleInner = "relais-interieur"
+	roleOuter = "relais-exterieur"
+)
+
+// fromInside tells whether a connection's address is in the house's networks.
+func (ch *Channel) fromInside(remote string) bool {
+	if ch.outer || len(ch.inside) == 0 {
+		return true
+	}
+	ap, err := netip.ParseAddrPort(remote)
+	if err != nil {
+		return false
+	}
+	addr := ap.Addr().Unmap()
+	return slices.ContainsFunc(ch.inside, func(p netip.Prefix) bool { return p.Contains(addr) })
 }
 
 // session is the state of one connection.
@@ -116,6 +174,12 @@ func (s *session) logLine(l auth.Line) {
 
 func (ch *Channel) ServeWS(w http.ResponseWriter, r *http.Request) {
 	s := &session{ch: ch, inflight: make(chan struct{}, maxInflight), tunnels: map[int]net.Conn{}, rate: newBucket(20, 40)}
+	if !ch.fromInside(r.RemoteAddr) {
+		zlog.Info().Str("remote", r.RemoteAddr).Msg("[channel] Refused: not from insideNets") // the address stays out of the journal
+		ch.auth.Log(auth.Line{Type: "relay.refused", Result: "denied", Reason: "network"})
+		http.Error(w, "not from the house's networks", http.StatusForbidden)
+		return
+	}
 	if token := bearer(r); token != "" {
 		c, err := ch.auth.Authenticate(token)
 		if err != nil {
@@ -165,12 +229,19 @@ func (s *session) welcome() {
 		s.expiry = time.AfterFunc(time.Until(time.Unix(c.Exp, 0))+expiryGrace, func() { s.conn.Close() })
 	}
 	s.mu.Unlock()
+	// Where this server stands, and the outer one's address for the app to
+	// keep: it switches there when the inner one can't be reached.
+	where := map[string]any{"push": "welcome", "outside": s.ch.outer}
+	if s.ch.outerURL != "" {
+		where["outerUrl"] = s.ch.outerURL
+	}
 	if c == nil {
-		s.ch.hub.push(s.client, map[string]any{"push": "welcome"})
+		s.ch.hub.push(s.client, where)
 		return
 	}
 	t := s.ch.auth.Terminal(c.Term)
-	s.ch.hub.push(s.client, map[string]any{"push": "welcome", "terminal": t, "level": *c.Lvl, "signedIn": c.Sub != ""})
+	where["terminal"], where["level"], where["signedIn"] = t, *c.Lvl, c.Sub != ""
+	s.ch.hub.push(s.client, where)
 	s.ch.hub.mu.Lock()
 	s.client.resources = s.pushResources
 	s.ch.hub.mu.Unlock()
@@ -339,6 +410,12 @@ func (s *session) handle(req request) (any, *opError) {
 		return p, invalid(err)
 	case "pages":
 		return s.ch.auth.Pages(), nil
+	case "savePage", "deletePage", "setHomePage":
+		if s.ch.outer {
+			return nil, fail(failRefused, "the pages are written from inside the house only")
+		}
+	}
+	switch req.Op {
 	case "savePage":
 		var in Page
 		if json.Unmarshal(req.Value, &in) != nil {

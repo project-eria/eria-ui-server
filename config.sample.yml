@@ -12,3 +12,11 @@ keyset: auth-keyset.json # eria-manager auth-keyset
 themes: themes # signed theme archives: <id>.tar + <id>.tar.sig
 # TD id of service-notices, whose notifications go to the apps
 notices: urn:eria:service:notices
+# Inner eria-ui-server only (AUTH-DESIGN §2.3): the house's networks it takes
+# connections from — the main LAN and its local IPv6 prefix (ULA), never the
+# ISP's — a second check behind the firewall; none: every address, warned.
+# The outer one's address is told to the apps, which switch to it when the
+# inner one can't be reached (from the VPN). The side comes from the
+# certificate's role (relais-interieur or relais-exterieur), never from here.
+# insideNets: [192.168.10.0/24, fd00:cafe::/48]
+# outerUrl: https://10.20.0.6:8090

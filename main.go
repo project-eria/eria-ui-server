@@ -52,6 +52,11 @@ var config = struct {
 	// Master's TD URL: its inventory lists the Things (F037). Empty: mDNS,
 	// and no service token sent.
 	Master string `yaml:"master"`
+	// The inner eria-ui-server (AUTH-DESIGN §2.3): the house's networks it
+	// takes connections from (CIDR, the LAN and its local IPv6 prefix, never
+	// the ISP's), and the outer one's address, told to the apps.
+	InsideNets []string `yaml:"insideNets"`
+	OuterURL   string   `yaml:"outerUrl"`
 }{}
 
 // maxBody bounds the JSON values exchanged with a Thing.
@@ -122,9 +127,13 @@ func main() {
 	go hub.watchNotices(ctx, config.Notices)
 	go announce(ctx, int(config.Port))
 
+	ch := &Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, noticesThing: config.Notices}
+	if err := ch.place(cert, config.InsideNets, config.OuterURL); err != nil {
+		zlog.Fatal().Err(err).Msg("[main] Bad certificate role or insideNets")
+	}
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Handler: newMux(&Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, noticesThing: config.Notices}),
+		Handler: newMux(ch),
 	}
 	server.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
 	go func() {
