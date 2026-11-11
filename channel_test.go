@@ -170,7 +170,7 @@ func TestChannel(t *testing.T) {
 	}
 	// The Thing refuses commands below level 1.
 	thing.refuse = func(r *http.Request) bool {
-		c, _, err := auth.Parse(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), fa.client.keys)
+		c, err := auth.Parse(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), fa.client.keys)
 		return err != nil || *c.Lvl > 1
 	}
 	registry := NewRegistry(nil)

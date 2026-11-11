@@ -55,7 +55,7 @@ func newFakeAuth(t *testing.T) *fakeAuth {
 	}()
 
 	f.client = &AuthClient{aud: "eria-maison", now: time.Now, rights: rights{tokens: map[string]heldToken{}, tables: map[string]*heldTable{}},
-		keys: func(kid string) (auth.PublicKey, bool, bool) { return pub, false, kid == pub.KID() },
+		keys: func(kid string) (auth.PublicKey, bool) { return pub, kid == pub.KID() },
 		http: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 			r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
 			return http.DefaultTransport.RoundTrip(r)
@@ -116,7 +116,7 @@ func (f *fakeAuth) serve(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"doc": doc})
 	case "/v1/pages":
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		c, _, err := auth.Parse(token, f.client.keys)
+		c, err := auth.Parse(token, f.client.keys)
 		if err != nil || c.Sub == "" || *c.Lvl > 1 {
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]string{"error": "denied"})
