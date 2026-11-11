@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,27 +13,49 @@ import (
 
 // The master's inventory (AUTH-DESIGN §2.4, F037): eria-ui-server no longer
 // browses DNS-SD; it reads the Things from the master, and sends its service
-// token only to their URLs. Without `master` (a bench without one) it browses
+// tokens only to their URLs, each Thing its own. Without `master` (a bench without one) it browses
 // mDNS and sends no token.
 //
 // ponytail: the Things added by address by the admin get no token either;
 // they are for networks where mDNS is filtered, which the master now covers.
 
 var (
-	_originsMu sync.RWMutex
-	_origins   = map[string]bool{}
+	_inventoryMu sync.RWMutex
+	_inventory   []inventory.Entry
 )
 
-// tokenFor is the service token for url, "" when url is not a Thing of the
-// inventory.
+// tokenFor is the service token for the Thing at url, "" when url is not a
+// Thing of the inventory.
 func tokenFor(url string) string {
-	_originsMu.RLock()
-	ok := _origins[inventory.Origin(url)]
-	_originsMu.RUnlock()
-	if !ok {
+	if thing := thingAt(url); thing != "" {
+		return serviceToken(thing)
+	}
+	return ""
+}
+
+// thingAt is the inventory's Thing u belongs to: same origin as its TD, the
+// longest TD path u starts with (an app serves its Things under /<ref>, an
+// ESP32 under /); "" when none.
+func thingAt(u string) string {
+	origin, path := inventory.Origin(u), pathOf(u)
+	_inventoryMu.RLock()
+	defer _inventoryMu.RUnlock()
+	best, length := "", -1
+	for _, e := range _inventory {
+		p := pathOf(e.URL)
+		if inventory.Origin(e.URL) == origin && (path == p || strings.HasPrefix(path, p+"/")) && len(p) > length {
+			best, length = e.ID, len(p)
+		}
+	}
+	return best
+}
+
+func pathOf(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
 		return ""
 	}
-	return serviceToken()
+	return strings.TrimSuffix(p.Path, "/")
 }
 
 // Follow reads the master's inventory every browse round (10 s) until ctx is
@@ -46,18 +70,14 @@ func (r *Registry) Follow(ctx context.Context, master string, roots []byte) {
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
-		if token := serviceToken(); token != "" {
+		if token := serviceToken(""); token != "" {
 			list, err := inventory.Read(ctx, client, master, token)
 			if err != nil {
 				zlog.Warn().Err(err).Msg("[inventory] Can't read the master's inventory, the last one kept")
 			} else {
-				origins := map[string]bool{}
-				for _, e := range list {
-					origins[inventory.Origin(e.URL)] = true
-				}
-				_originsMu.Lock()
-				_origins = origins
-				_originsMu.Unlock()
+				_inventoryMu.Lock()
+				_inventory = list
+				_inventoryMu.Unlock()
 				for _, e := range list {
 					r.seen(e.URL, e.Node, false)
 				}

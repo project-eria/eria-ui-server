@@ -91,7 +91,7 @@ func NewAuthClient(addr, aud string, cert tls.Certificate, rootsPEM []byte, keys
 	if len(deploy) == 0 {
 		return nil, errors.New("no deployment root")
 	}
-	a := &AuthClient{aud: aud, now: time.Now, rights: rights{tables: map[string]*heldTable{}}}
+	a := &AuthClient{aud: aud, now: time.Now, rights: rights{tokens: map[string]heldToken{}, tables: map[string]*heldTable{}}}
 	a.rights.key, _ = cert.PrivateKey.(*ecdsa.PrivateKey)
 	a.journal = auth.NewJournal(a.sendJournal)
 	a.dial = func(ctx context.Context) (net.Conn, error) {

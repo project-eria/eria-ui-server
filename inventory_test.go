@@ -24,15 +24,16 @@ func TestFollowInventory(t *testing.T) {
 	}))
 	defer thing.Close()
 	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/inventory" || r.Header.Get("Authorization") != "Bearer svc" {
+		if r.URL.Path != "/inventory" || r.Header.Get("Authorization") != "Bearer svc:" {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		json.NewEncoder(w).Encode([]inventory.Entry{{ID: "eria:salon:1", URL: thing.URL + "/", Node: "rdc"}})
+		json.NewEncoder(w).Encode([]inventory.Entry{{ID: "eria:salon:1", URL: thing.URL + "/", Node: "rdc"},
+			{ID: "eria:cuisine:1", URL: thing.URL + "/cuisine/", Node: "rdc"}})
 	}))
 	defer master.Close()
-	serviceToken = func() string { return "svc" }
-	defer func() { serviceToken = func() string { return "" } }()
+	serviceToken = func(thing string) string { return "svc:" + thing }
+	defer func() { serviceToken = func(string) string { return "" } }()
 
 	r := NewRegistry(nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,7 +41,9 @@ func TestFollowInventory(t *testing.T) {
 	go r.Follow(ctx, master.URL+"/", nil)
 	require.Eventually(t, func() bool { return len(r.Things()) == 1 }, 2*time.Second, 20*time.Millisecond)
 	assert.Equal(t, "rdc", r.Things()[0].Node)
-	assert.Equal(t, "Bearer svc", <-gotToken, "a Thing of the inventory gets the service token")
-	assert.Equal(t, "svc", tokenFor(thing.URL+"/properties/x"))
+	assert.Contains(t, <-gotToken, "Bearer svc:eria:", "a Thing of the inventory gets its service token")
+	assert.Equal(t, "svc:eria:salon:1", tokenFor(thing.URL+"/properties/x"))
+	assert.Equal(t, "svc:eria:cuisine:1", tokenFor(thing.URL+"/cuisine/properties/x"), "the longest TD path")
+	assert.Equal(t, "svc:eria:salon:1", tokenFor(thing.URL+"/cuisinette"), "a path, not a prefix")
 	assert.Empty(t, tokenFor("http://rogue:8080/"), "not in the inventory: no token")
 }

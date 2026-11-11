@@ -26,9 +26,9 @@ const (
 	tableTTL         = 30 * time.Second
 )
 
-// serviceToken is the relay's own token for the Things ("" when auth hasn't
-// answered yet, and in tests).
-var serviceToken = func() string { return "" }
+// serviceToken is the relay's own token for a Thing (its DNS-SD instance),
+// "" for the master; "" when auth gives none, and in tests.
+var serviceToken = func(thing string) string { return "" }
 
 func setBearer(h http.Header, token string) {
 	if token != "" {
@@ -40,11 +40,14 @@ type rights struct {
 	key *ecdsa.PrivateKey // the relay's certificate key: proves its token requests
 
 	mu      sync.Mutex
-	token   string
-	iat     time.Time
-	exp     time.Time
+	tokens  map[string]heldToken // by Thing, "" for the master
 	tables  map[string]*heldTable
 	refresh sync.Mutex // one service token request at a time
+}
+
+type heldToken struct {
+	token            string
+	iat, exp, failed time.Time
 }
 
 type heldTable struct {
@@ -53,53 +56,63 @@ type heldTable struct {
 	fetching bool
 }
 
-// ServiceToken returns the relay's token, renewed every minute: its grants
-// follow the rooms of the adopted Things, which the admin changes at any time.
+// ServiceToken returns the relay's token for thing (§4.7 step 4e: a Thing
+// can't replay it at the others), "" for the master's, renewed every minute:
+// its grants follow the Thing's rooms, which the admin changes at any time.
+// A failure is retried after 30 s (a Thing auth doesn't know yet).
 // ponytail: renewal by age, a push from auth when the grants change if the
-// minute matters.
-func (a *AuthClient) ServiceToken() string {
-	a.rights.mu.Lock()
-	now := a.now()
-	token, fresh := a.rights.token, now.Before(a.rights.iat.Add(time.Minute)) && now.Before(a.rights.exp.Add(-5*time.Minute))
-	a.rights.mu.Unlock()
-	if fresh || a.rights.key == nil {
-		return token
+// minute matters; one request at a time across the Things (a few ms on the
+// LAN).
+func (a *AuthClient) ServiceToken(thing string) string {
+	if a.rights.key == nil {
+		return ""
 	}
 	a.rights.refresh.Lock()
 	defer a.rights.refresh.Unlock()
-	if t, err := a.newServiceToken(); err == nil {
-		return t
-	} else {
-		zlog.Warn().Err(err).Msg("[rights] no service token")
+	a.rights.mu.Lock()
+	h, now := a.rights.tokens[thing], a.now()
+	a.rights.mu.Unlock()
+	fresh := now.Before(h.iat.Add(time.Minute)) && now.Before(h.exp.Add(-5*time.Minute))
+	if !fresh && now.After(h.failed.Add(30*time.Second)) {
+		if t, err := a.newServiceToken(thing); err == nil {
+			h = t
+		} else {
+			zlog.Warn().Err(err).Str("thing", thing).Msg("[rights] no service token")
+			h.failed = now
+		}
+		a.rights.mu.Lock()
+		a.rights.tokens[thing] = h
+		a.rights.mu.Unlock()
 	}
-	return token
+	if !now.Before(h.exp) {
+		return ""
+	}
+	return h.token
 }
 
-func (a *AuthClient) newServiceToken() (string, error) {
+func (a *AuthClient) newServiceToken(thing string) (heldToken, error) {
 	var ch struct{ Challenge string }
 	if _, err := a.call(http.MethodPost, "/v1/relay/challenge", "", nil, &ch); err != nil {
-		return "", err
+		return heldToken{}, err
 	}
 	hash := sha256.Sum256([]byte(ch.Challenge + domainRelayToken))
 	r, s, err := ecdsa.Sign(rand.Reader, a.rights.key, hash[:])
 	if err != nil {
-		return "", err
+		return heldToken{}, err
 	}
 	sig := make([]byte, 64)
 	r.FillBytes(sig[:32])
 	s.FillBytes(sig[32:])
 	var out struct{ Token string }
-	if _, err := a.call(http.MethodPost, "/v1/relay/token", "", map[string]any{"challenge": ch.Challenge, "sig": sig}, &out); err != nil {
-		return "", err
+	body := map[string]any{"challenge": ch.Challenge, "sig": sig, "thing": thing}
+	if _, err := a.call(http.MethodPost, "/v1/relay/token", "", body, &out); err != nil {
+		return heldToken{}, err
 	}
 	c, err := a.Authenticate(out.Token)
 	if err != nil {
-		return "", err
+		return heldToken{}, err
 	}
-	a.rights.mu.Lock()
-	a.rights.token, a.rights.iat, a.rights.exp = out.Token, time.Unix(c.Iat, 0), time.Unix(c.Exp, 0)
-	a.rights.mu.Unlock()
-	return out.Token, nil
+	return heldToken{token: out.Token, iat: time.Unix(c.Iat, 0), exp: time.Unix(c.Exp, 0)}, nil
 }
 
 // Table returns the signed table held for a Thing. A stale one is fetched

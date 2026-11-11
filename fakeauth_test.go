@@ -53,7 +53,7 @@ func newFakeAuth(t *testing.T) *fakeAuth {
 		}
 	}()
 
-	f.client = &AuthClient{aud: "eria-maison", now: time.Now, rights: rights{tables: map[string]*heldTable{}},
+	f.client = &AuthClient{aud: "eria-maison", now: time.Now, rights: rights{tokens: map[string]heldToken{}, tables: map[string]*heldTable{}},
 		keys: func(kid string) (auth.PublicKey, bool, bool) { return pub, false, kid == pub.KID() },
 		http: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 			r.URL.Scheme, r.URL.Host = target.Scheme, target.Host

@@ -50,7 +50,7 @@ func followRelease(ctx context.Context, master string, roots []byte, changed fun
 	t := time.NewTicker(releaseEvery)
 	defer t.Stop()
 	for {
-		if token := serviceToken(); token != "" {
+		if token := serviceToken(""); token != "" {
 			if r, err := readRelease(ctx, client, master, token); err != nil {
 				zlog.Warn().Err(err).Msg("[release] Can't read the app's release from the master")
 			} else if old := _release.Swap(r); version(old) != version(r) {
