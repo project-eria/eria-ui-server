@@ -59,7 +59,7 @@ type heldTable struct {
 // ServiceToken returns the relay's token for thing (§4.7 step 4e: a Thing
 // can't replay it at the others), "" for the master's, renewed at 2/3 of its
 // life like the apps' tokens: its grants follow the Thing's rooms, so a room
-// changed by the admin is seen within a few minutes. A fresh token never
+// changed by the admin is seen within a few minutes. A valid token never
 // waits for a renewal in progress; a failure is retried after 30 s (a Thing
 // auth doesn't know yet).
 // ponytail: one renewal at a time across the Things (a few ms on the LAN),
@@ -69,8 +69,8 @@ func (a *AuthClient) ServiceToken(thing string) string {
 		return ""
 	}
 	h := a.heldToken(thing)
-	if a.renewable(h) {
-		a.rights.refresh.Lock()
+	// A token still valid doesn't wait for a renewal in progress.
+	if a.renewable(h) && (a.rights.refresh.TryLock() || a.waitRefresh(h)) {
 		if h = a.heldToken(thing); a.renewable(h) { // not renewed while waiting
 			if t, err := a.newServiceToken(thing); err == nil {
 				h = t
@@ -88,6 +88,16 @@ func (a *AuthClient) ServiceToken(thing string) string {
 		return ""
 	}
 	return h.token
+}
+
+// waitRefresh takes the renewal lock for an expired token; a valid one
+// is served as is.
+func (a *AuthClient) waitRefresh(h heldToken) bool {
+	if a.now().Before(h.exp) {
+		return false
+	}
+	a.rights.refresh.Lock()
+	return true
 }
 
 func (a *AuthClient) heldToken(thing string) heldToken {

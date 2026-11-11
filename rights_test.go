@@ -41,7 +41,19 @@ func TestServiceTokenRenewal(t *testing.T) {
 	}
 	c.rights.refresh.Unlock()
 
-	at(3*time.Minute + 30*time.Second)
+	at(3*time.Minute + 30*time.Second) // past 2/3, still valid: served during a renewal
+	c.rights.refresh.Lock()
+	go func() { done <- c.ServiceToken("lampe") }()
+	select {
+	case tok := <-done:
+		if tok != first || issued() != 1 {
+			t.Fatal("a valid token waited or changed during a renewal")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a valid token waited for the renewal")
+	}
+	c.rights.refresh.Unlock()
+
 	if c.ServiceToken("lampe") == first || issued() != 2 {
 		t.Fatalf("not renewed after 2/3 of its life: issued %d", issued())
 	}
