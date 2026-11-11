@@ -5,9 +5,10 @@ go 1.26.0
 require (
 	github.com/brutella/dnssd v1.2.14
 	github.com/gorilla/websocket v1.5.3
-	github.com/project-eria/eria-core v1.18.0
-	github.com/project-eria/go-wot v1.12.0
+	github.com/project-eria/eria-core v1.21.0
+	github.com/project-eria/go-wot v1.14.0
 	github.com/rs/zerolog v1.35.1
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -31,6 +32,7 @@ require (
 	github.com/valyala/fasthttp v1.74.0 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
