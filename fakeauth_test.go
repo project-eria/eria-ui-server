@@ -30,6 +30,7 @@ type fakeAuth struct {
 	revoke []auth.Revocation
 	saved  []string // tokens that saved a page
 	tables map[string]auth.Table
+	issued int // service tokens issued
 	client *AuthClient
 }
 
@@ -128,6 +129,14 @@ func (f *fakeAuth) serve(w http.ResponseWriter, r *http.Request) {
 		f.config.Version++
 		f.saved = append(f.saved, token)
 		json.NewEncoder(w).Encode(p)
+	case "/v1/relay/challenge":
+		w.Write([]byte(`{"challenge":"c"}`))
+	case "/v1/relay/token":
+		f.issued++
+		lvl, now := 9, f.client.now()
+		tok, _ := auth.Sign(f.priv, f.pub.KID(), auth.Claims{Iss: "auth", Aud: "eria-maison", Kind: auth.KindService,
+			Sub: "app:relay", Lvl: &lvl, Iat: now.Unix(), Exp: now.Add(5 * time.Minute).Unix(), Jti: randomHex()})
+		json.NewEncoder(w).Encode(map[string]string{"token": tok})
 	case "/v1/screen":
 		w.Write([]byte(`{"ok":true}`))
 	default:

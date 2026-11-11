@@ -57,37 +57,49 @@ type heldTable struct {
 }
 
 // ServiceToken returns the relay's token for thing (§4.7 step 4e: a Thing
-// can't replay it at the others), "" for the master's, renewed every minute:
-// its grants follow the Thing's rooms, which the admin changes at any time.
-// A failure is retried after 30 s (a Thing auth doesn't know yet).
-// ponytail: renewal by age, a push from auth when the grants change if the
-// minute matters; one request at a time across the Things (a few ms on the
-// LAN).
+// can't replay it at the others), "" for the master's, renewed at 2/3 of its
+// life like the apps' tokens: its grants follow the Thing's rooms, so a room
+// changed by the admin is seen within a few minutes. A fresh token never
+// waits for a renewal in progress; a failure is retried after 30 s (a Thing
+// auth doesn't know yet).
+// ponytail: one renewal at a time across the Things (a few ms on the LAN),
+// a push from auth when the grants change if the minutes matter.
 func (a *AuthClient) ServiceToken(thing string) string {
 	if a.rights.key == nil {
 		return ""
 	}
-	a.rights.refresh.Lock()
-	defer a.rights.refresh.Unlock()
-	a.rights.mu.Lock()
-	h, now := a.rights.tokens[thing], a.now()
-	a.rights.mu.Unlock()
-	fresh := now.Before(h.iat.Add(time.Minute)) && now.Before(h.exp.Add(-5*time.Minute))
-	if !fresh && now.After(h.failed.Add(30*time.Second)) {
-		if t, err := a.newServiceToken(thing); err == nil {
-			h = t
-		} else {
-			zlog.Warn().Err(err).Str("thing", thing).Msg("[rights] no service token")
-			h.failed = now
+	h := a.heldToken(thing)
+	if a.renewable(h) {
+		a.rights.refresh.Lock()
+		if h = a.heldToken(thing); a.renewable(h) { // not renewed while waiting
+			if t, err := a.newServiceToken(thing); err == nil {
+				h = t
+			} else {
+				zlog.Warn().Err(err).Str("thing", thing).Msg("[rights] no service token")
+				h.failed = a.now()
+			}
+			a.rights.mu.Lock()
+			a.rights.tokens[thing] = h
+			a.rights.mu.Unlock()
 		}
-		a.rights.mu.Lock()
-		a.rights.tokens[thing] = h
-		a.rights.mu.Unlock()
+		a.rights.refresh.Unlock()
 	}
-	if !now.Before(h.exp) {
+	if !a.now().Before(h.exp) {
 		return ""
 	}
 	return h.token
+}
+
+func (a *AuthClient) heldToken(thing string) heldToken {
+	a.rights.mu.Lock()
+	defer a.rights.mu.Unlock()
+	return a.rights.tokens[thing]
+}
+
+// renewable: past 2/3 of its life, and no failure in the last 30 s.
+func (a *AuthClient) renewable(h heldToken) bool {
+	now := a.now()
+	return !now.Before(h.iat.Add(h.exp.Sub(h.iat)*2/3)) && now.After(h.failed.Add(30*time.Second))
 }
 
 func (a *AuthClient) newServiceToken(thing string) (heldToken, error) {
