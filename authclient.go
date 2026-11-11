@@ -21,6 +21,7 @@ import (
 
 	"github.com/project-eria/go-wot/auth"
 	"github.com/project-eria/go-wot/auth/authz"
+	"github.com/project-eria/go-wot/guard"
 	zlog "github.com/rs/zerolog/log"
 )
 
@@ -109,7 +110,7 @@ func NewAuthClient(addr, aud string, cert tls.Certificate, rootsPEM []byte, keys
 			return inner, inner.HandshakeContext(ctx)
 		}}}
 
-	data, err := os.ReadFile(keysetFile)
+	data, err := readKeyset(keysetFile)
 	if err != nil {
 		return nil, fmt.Errorf("auth keyset: %w", err)
 	}
@@ -379,4 +380,15 @@ func (a *AuthClient) ReportScreen(token, screen string) error {
 func (a *AuthClient) SetHomePage(token, id string) error {
 	_, err := a.call(http.MethodPut, "/v1/config/home-page", token, map[string]string{"page": id}, nil)
 	return err
+}
+
+// readKeyset prefers the keyset the agent writes beside it (its setKeyset,
+// after an activation or a restore of auth, then restarts the app): a new
+// auth key reaches the relay without a file copied by hand. Otherwise the
+// file of the config, for a relay installed by hand.
+func readKeyset(keysetFile string) ([]byte, error) {
+	if s, err := guard.ReadSettings(keysetFile); err == nil && s.Keyset != "" {
+		return []byte(s.Keyset), nil
+	}
+	return os.ReadFile(keysetFile)
 }

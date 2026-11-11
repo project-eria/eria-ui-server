@@ -4,8 +4,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/project-eria/go-wot/guard"
 )
 
 // The service token is renewed at 2/3 of its 5 min life, and a fresh token
@@ -56,5 +60,19 @@ func TestServiceTokenRenewal(t *testing.T) {
 
 	if c.ServiceToken("lampe") == first || issued() != 2 {
 		t.Fatalf("not renewed after 2/3 of its life: issued %d", issued())
+	}
+}
+
+// The keyset the agent writes beside the config's file wins over it.
+func TestReadKeysetPrefersTheAgents(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "auth-keyset.json")
+	os.WriteFile(file, []byte("by hand"), 0o600)
+	if got, _ := readKeyset(file); string(got) != "by hand" {
+		t.Fatalf("got %q", got)
+	}
+	os.WriteFile(filepath.Join(dir, guard.SettingsFile), []byte(`{"keyset":"from the agent"}`), 0o600)
+	if got, _ := readKeyset(file); string(got) != "from the agent" {
+		t.Fatalf("got %q", got)
 	}
 }
