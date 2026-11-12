@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/brutella/dnssd v1.2.14
 	github.com/gorilla/websocket v1.5.3
-	github.com/project-eria/eria-core v1.21.0
-	github.com/project-eria/go-wot v1.14.0
+	github.com/project-eria/eria-core v1.22.0
+	github.com/project-eria/go-wot v1.15.0
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
 )
