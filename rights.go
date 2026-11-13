@@ -27,7 +27,7 @@ const (
 )
 
 // serviceToken is the relay's own token for a Thing (its DNS-SD instance),
-// "" for the master; "" when auth gives none, and in tests.
+// "" for the coordinator; "" when auth gives none, and in tests.
 var serviceToken = func(thing string) string { return "" }
 
 func setBearer(h http.Header, token string) {
@@ -40,7 +40,7 @@ type rights struct {
 	key *ecdsa.PrivateKey // the relay's certificate key: proves its token requests
 
 	mu      sync.Mutex
-	tokens  map[string]heldToken // by Thing, "" for the master
+	tokens  map[string]heldToken // by Thing, "" for the coordinator
 	tables  map[string]*heldTable
 	refresh sync.Mutex // one service token request at a time
 }
@@ -57,7 +57,7 @@ type heldTable struct {
 }
 
 // ServiceToken returns the relay's token for thing (§4.7 step 4e: a Thing
-// can't replay it at the others), "" for the master's, renewed at 2/3 of its
+// can't replay it at the others), "" for the coordinator's, renewed at 2/3 of its
 // life like the apps' tokens: its grants follow the Thing's rooms, so a room
 // changed by the admin is seen within a few minutes. A valid token never
 // waits for a renewal in progress; a failure is retried after 30 s (a Thing

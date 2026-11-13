@@ -15,20 +15,20 @@ import (
 )
 
 // The app's versions (AUTH-DESIGN §3.4, step 5g-2): the inner
-// eria-ui-server reads the highest published one from the master, tells the
+// eria-ui-server reads the highest published one from the coordinator, tells the
 // apps (push "resources"), and serves the Tauri updater its manifest and the
-// package, fetched from the master's artifact server. It checks nothing: the
+// package, fetched from the coordinator's artifact server. It checks nothing: the
 // app does, with the descriptor signed by the deployment key, the package's
 // sha256, then the updater with the update key's minisign signature.
 
-// Release is the master's property appRelease.
+// Release is the coordinator's property appRelease.
 type Release struct {
 	Version string                   `json:"version"`
 	Targets map[string]releaseTarget `json:"targets"`
 }
 
 type releaseTarget struct {
-	URL        string          `json:"url"` // on the master's artifact server
+	URL        string          `json:"url"` // on the coordinator's artifact server
 	Sha256     string          `json:"sha256"`
 	Signature  string          `json:"signature"`  // minisign, for the updater
 	Descriptor json.RawMessage `json:"descriptor"` // AppRelease signed by the deployment key
@@ -36,14 +36,14 @@ type releaseTarget struct {
 
 var _release atomic.Pointer[Release]
 
-// releaseEvery is how often the master is asked: a new version reaches the
+// releaseEvery is how often the coordinator is asked: a new version reaches the
 // apps within it.
 const releaseEvery = 10 * time.Minute
 
-// followRelease reads the master's published version until ctx is done;
+// followRelease reads the coordinator's published version until ctx is done;
 // changed runs when it changes.
-func followRelease(ctx context.Context, master string, roots []byte, changed func()) {
-	client, err := inventory.MasterClient(roots, 10*time.Second)
+func followRelease(ctx context.Context, coordinator string, roots []byte, changed func()) {
+	client, err := inventory.CoordinatorClient(roots, 10*time.Second)
 	if err != nil {
 		zlog.Fatal().Err(err).Msg("[release] Bad deployment roots")
 	}
@@ -51,8 +51,8 @@ func followRelease(ctx context.Context, master string, roots []byte, changed fun
 	defer t.Stop()
 	for {
 		if token := serviceToken(""); token != "" {
-			if r, err := readRelease(ctx, client, master, token); err != nil {
-				zlog.Warn().Err(err).Msg("[release] Can't read the app's release from the master")
+			if r, err := readRelease(ctx, client, coordinator, token); err != nil {
+				zlog.Warn().Err(err).Msg("[release] Can't read the app's release from the coordinator")
 			} else if old := _release.Swap(r); version(old) != version(r) {
 				zlog.Info().Str("version", version(r)).Msg("[release] App release")
 				changed()
@@ -73,8 +73,8 @@ func version(r *Release) string {
 	return r.Version
 }
 
-func readRelease(ctx context.Context, client *http.Client, master, token string) (*Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(master, "/")+"/appRelease", nil)
+func readRelease(ctx context.Context, client *http.Client, coordinator, token string) (*Release, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(coordinator, "/")+"/appRelease", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func readRelease(ctx context.Context, client *http.Client, master, token string)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("master answered %d", resp.StatusCode)
+		return nil, fmt.Errorf("coordinator answered %d", resp.StatusCode)
 	}
 	var r *Release // null: none published
 	return r, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r)
@@ -104,7 +104,7 @@ func releasePush() map[string]any {
 	return map[string]any{"version": r.Version, "descriptors": descriptors}
 }
 
-// packageClient fetches a package from the master's artifact server.
+// packageClient fetches a package from the coordinator's artifact server.
 var packageClient = &http.Client{Timeout: 10 * time.Minute}
 
 // serveRelease answers the Tauri updater: GET /api/release/{target} is its
@@ -129,7 +129,7 @@ func (ch *Channel) serveRelease(w http.ResponseWriter, r *http.Request) {
 			"url": "https://" + r.Host + "/api/release/" + r.PathValue("target") + "/package"})
 		return
 	}
-	resp, err := packageClient.Get(target.URL) // the master's, never the request's
+	resp, err := packageClient.Get(target.URL) // the coordinator's, never the request's
 	if err != nil || resp.StatusCode != http.StatusOK {
 		http.Error(w, "package unavailable", http.StatusBadGateway)
 		return

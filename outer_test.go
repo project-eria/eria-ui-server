@@ -16,7 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// roleCert is a self-signed certificate for a role, as eria-manager signs them.
+// roleCert is a self-signed certificate for a role, as eria-coordinator signs them.
 func roleCert(t *testing.T, role string) tls.Certificate {
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{role},

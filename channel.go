@@ -125,7 +125,7 @@ func (ch *Channel) place(cert tls.Certificate, inside []string, outerURL string)
 	return nil
 }
 
-// Roles of the two eria-ui-server's certificates (eria-manager tls-sign).
+// Roles of the two eria-ui-server's certificates (eria-coordinator tls-sign).
 const (
 	roleInner = "relais-interieur"
 	roleOuter = "relais-exterieur"

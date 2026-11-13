@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Step 5g-2: the updater's manifest and the package, from the master's
+// Step 5g-2: the updater's manifest and the package, from the coordinator's
 // artifact server; nothing from the outer server.
 func TestServeRelease(t *testing.T) {
 	artifacts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

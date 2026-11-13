@@ -4,14 +4,14 @@ Relay between the ERIA app ([eria-ui-app](https://github.com/project-eria/eria-u
 the services of the house (lights, shutters, contexts…): mDNS discovery of the WoT Things, one
 WebSocket per app for commands, observations, events, settings and the tunnel to auth (below).
 It keeps no state (AUTH-DESIGN §3.6): tokens are issued by **eria-auth**, checked here with the
-auth keyset signed by the master and auth's signed revocation list; pages, start pages,
+auth keyset signed by the coordinator and auth's signed revocation list; pages, start pages,
 contexts, hidden and manual Things are auth's, read every 3 s. Design: eria-ui-app's `PLAN.md`
 (§2.1, §2.2) and `AUTH-DESIGN.md`.
 
 ## Channel (`wss://…/api/ws`)
 
 TLS with the relay's role certificate (`relais-interieur` or `relais-exterieur`), signed by
-the master. Handshake header `Authorization: Bearer <token>` (a terminal or person token from
+the coordinator. Handshake header `Authorization: Bearer <token>` (a terminal or person token from
 auth); a refused token gets 401. Without a token, only the tunnel ops and `token` are open:
 the app enrolls and gets its first token through the tunnel, then sends it. The connection is
 closed 30 s after its token's `exp` unless the app sent a new one, and as soon as the revocation
@@ -69,7 +69,7 @@ GOWORK=off go test ./...
 ```
 
 Local relay: `config.yml` (from `config.sample.yml`), its TLS files from
-eria-manager (`eria-ui-server csr`, `tls-sign`, `tls-root`, `auth-keyset`) and a running
+eria-coordinator (`eria-ui-server csr`, `tls-sign`, `tls-root`, `auth-keyset`) and a running
 eria-auth.
 
 ## Build
@@ -82,5 +82,5 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o eria-ui-server .
 
 Repository `project-eria/eria-ui-server`. Pushing a `vX.Y.Z` tag runs the shared ERIA release
 workflow (`project-eria/workflows`): GoReleaser publishes the raw binaries, `eria-app.yml`
-and `checksums.txt`, listed by the master's catalog. Deploy it from the Catalogue, then put
+and `checksums.txt`, listed by the coordinator's catalog. Deploy it from the Catalogue, then put
 its TLS files in its data folder (`eria-app.yml`). It keeps no state: it can move freely.

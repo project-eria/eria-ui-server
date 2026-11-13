@@ -1,11 +1,11 @@
 package main
 
 import (
-	"slices"
 	"context"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -323,14 +323,18 @@ func TestChannel(t *testing.T) {
 	pollEvery, retryObserve = 20*time.Millisecond, 150*time.Millisecond
 	thing.refuseObserve.Store(true)
 	b.call("observe", map[string]any{"thing": "urn:test", "name": "hum"})
-	b.next(func(m map[string]any) bool { return m["property"] == "hum" && m["polled"] == true && m["value"] == float64(42) })
+	b.next(func(m map[string]any) bool {
+		return m["property"] == "hum" && m["polled"] == true && m["value"] == float64(42)
+	})
 	if got := thing.bearer.Load(); got != "Bearer "+entree {
 		t.Errorf("polled with %v, want the app's token", got)
 	}
 	thing.refuseObserve.Store(false)
 	<-thing.connected
 	thing.emit("44")
-	b.next(func(m map[string]any) bool { return m["property"] == "hum" && m["polled"] == nil && m["value"] == float64(44) })
+	b.next(func(m map[string]any) bool {
+		return m["property"] == "hum" && m["polled"] == nil && m["value"] == float64(44)
+	})
 
 	// Pages: auth decides on the person's token, every app gets the new version.
 	page := map[string]any{"title": "Entrée", "layout": "grid", "elements": []map[string]any{

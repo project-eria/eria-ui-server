@@ -27,7 +27,7 @@ import (
 
 // AuthClient is the relay's side of auth (AUTH-DESIGN §3.6). The relay keeps
 // no state of its own: it checks the tokens with the auth keyset signed by
-// the master, applies auth's signed revocation list, and serves the
+// the coordinator, applies auth's signed revocation list, and serves the
 // configuration auth keeps (pages, start pages, contexts, hidden Things).
 // It reaches auth in mTLS with its role certificate, like the apps' tunnels.
 type AuthClient struct {

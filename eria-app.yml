@@ -1,4 +1,4 @@
-# ERIA package description (orchestrator catalog, eria-manager DESIGN §12.3)
+# ERIA package description (orchestrator catalog, eria-coordinator DESIGN §12.3)
 name: eria-ui-server
 title: Relais de l'application ERIA
 description: Relais entre l'application ERIA et les services (lumières, volets, contextes…), et tunnel vers auth
@@ -8,8 +8,8 @@ requires: []
 exec:
   args: ["--config-path", "{config}"]
   # No state of its own (AUTH-DESIGN §3.6). {data} holds its TLS files:
-  #   eria-ui-server csr  (TLS key), then eria-manager tls-sign --role relais-interieur
-  #   roots.pem (eria-manager tls-root) and auth-keyset.json (eria-manager auth-keyset)
+  #   eria-ui-server csr  (TLS key), then eria-coordinator tls-sign --role relais-interieur
+  #   roots.pem (eria-coordinator tls-root) and auth-keyset.json (eria-coordinator auth-keyset)
   # Themes: drop signed archives (<id>.tar + .sig) in {data}/themes on the node.
   env: ["ERIA_UI_SERVER_DATA={data}"]
   health: { url: "http://127.0.0.1:8099/api/health", grace: 20s, interval: 10s }

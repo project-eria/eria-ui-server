@@ -42,16 +42,16 @@ var config = struct {
 	Themes string `yaml:"themes" default:"themes"`
 	// auth (AUTH-DESIGN §3.6): its tunnel listener, the house id, and the
 	// relay's certificate (role relais-interieur or relais-exterieur) signed
-	// by the master, with the deployment roots and the auth keyset.
+	// by the coordinator, with the deployment roots and the auth keyset.
 	Auth       string `yaml:"auth" required:"true"`
 	Deployment string `yaml:"deployment" required:"true"`
 	Cert       string `yaml:"cert" default:"relay.crt"`
 	CertKey    string `yaml:"certKey" default:"relay-tls.key"`
 	Roots      string `yaml:"roots" default:"roots.pem"`
 	Keyset     string `yaml:"keyset" default:"auth-keyset.json"`
-	// Master's TD URL: its inventory lists the Things (F037). Empty: mDNS,
+	// Coordinator's TD URL: its inventory lists the Things (F037). Empty: mDNS,
 	// and no service token sent.
-	Master string `yaml:"master"`
+	Coordinator string `yaml:"coordinator"`
 	// The inner eria-ui-server (AUTH-DESIGN §2.3): the house's networks it
 	// takes connections from (CIDR, the LAN and its local IPv6 prefix, never
 	// the ISP's), and the outer one's address, told to the apps.
@@ -83,13 +83,13 @@ func main() {
 
 	cert, err := tls.LoadX509KeyPair(config.Cert, config.CertKey)
 	if err != nil {
-		zlog.Fatal().Err(err).Msg("[main] No TLS certificate (eria-ui-server csr, then eria-manager tls-sign)")
+		zlog.Fatal().Err(err).Msg("[main] No TLS certificate (eria-ui-server csr, then eria-coordinator tls-sign)")
 	}
 	roots, err := os.ReadFile(config.Roots)
 	if err != nil {
-		zlog.Fatal().Err(err).Msg("[main] No deployment roots (eria-manager tls-root)")
+		zlog.Fatal().Err(err).Msg("[main] No deployment roots (eria-coordinator tls-root)")
 	}
-	if err := useMasterTLS(roots); err != nil {
+	if err := useCoordinatorTLS(roots); err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Bad deployment roots")
 	}
 	auth, err := NewAuthClient(config.Auth, config.Deployment, cert, roots, config.Keyset)
@@ -100,10 +100,10 @@ func main() {
 	serviceToken = auth.ServiceToken
 	registry := NewRegistry(nil)
 	ctx, stop := context.WithCancel(context.Background())
-	if config.Master != "" {
-		go registry.Follow(ctx, config.Master, roots)
+	if config.Coordinator != "" {
+		go registry.Follow(ctx, config.Coordinator, roots)
 	} else {
-		zlog.Warn().Msg("[main] No master: Things found by mDNS, no service token sent")
+		zlog.Warn().Msg("[main] No coordinator: Things found by mDNS, no service token sent")
 		go func() {
 			if err := registry.Discover(ctx); err != nil {
 				zlog.Fatal().Err(err).Msg("[main] mDNS discovery failed")
@@ -131,8 +131,8 @@ func main() {
 	if err := ch.place(cert, config.InsideNets, config.OuterURL); err != nil {
 		zlog.Fatal().Err(err).Msg("[main] Bad certificate role or insideNets")
 	}
-	if config.Master != "" && !ch.outer {
-		go followRelease(ctx, config.Master, roots, func() { hub.refresh("") })
+	if config.Coordinator != "" && !ch.outer {
+		go followRelease(ctx, config.Coordinator, roots, func() { hub.refresh("") })
 	}
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.Host, config.Port),
@@ -186,7 +186,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // csr makes the relay's TLS key in the current folder (if absent) and prints
-// its certificate request, for eria-manager tls-sign --role relais-interieur
+// its certificate request, for eria-coordinator tls-sign --role relais-interieur
 // (or relais-exterieur).
 func csr(out io.Writer) error {
 	const keyFile = "relay-tls.key"
