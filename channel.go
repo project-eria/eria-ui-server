@@ -367,6 +367,8 @@ func (s *session) handle(req request) (any, *opError) {
 		return services, nil
 	case "contexts":
 		return s.ch.auth.Contexts(), nil
+	case "levels":
+		return s.ch.auth.Levels(), nil
 	case "read":
 		td, p, err := s.property(req)
 		if err != nil {

@@ -51,6 +51,7 @@ type Config struct {
 	Pages     []Page           `json:"pages"`
 	HomePage  string           `json:"homePage"`
 	Contexts  []Context        `json:"contexts"`
+	Levels    []Level          `json:"levels"`
 	Hidden    []string         `json:"hidden"`
 	Manual    []ManualThing    `json:"manual"`
 	Terminals []TerminalScreen `json:"terminals"`
@@ -325,6 +326,19 @@ func (a *AuthClient) Contexts() []Context {
 		return c
 	}
 	return []Context{}
+}
+
+// Level names a level for the interfaces (display only).
+type Level struct {
+	Level int    `json:"level"`
+	Name  string `json:"name"`
+}
+
+func (a *AuthClient) Levels() []Level {
+	if l := a.snapshot().Levels; l != nil {
+		return l
+	}
+	return []Level{}
 }
 
 func (a *AuthClient) Hidden() []string { return a.snapshot().Hidden }
