@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/brutella/dnssd v1.2.14
 	github.com/gorilla/websocket v1.5.3
-	github.com/project-eria/eria-core v1.23.1
-	github.com/project-eria/go-wot v1.16.0
+	github.com/project-eria/eria-core v1.23.3
+	github.com/project-eria/go-wot v1.16.2
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
 )
@@ -20,7 +20,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gookit/goutil v0.8.0 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.30 // indirect
@@ -33,8 +33,8 @@ require (
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
