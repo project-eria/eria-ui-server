@@ -1,6 +1,6 @@
 # ERIA package description (orchestrator catalog, eria-coordinator DESIGN §12.3)
 name: eria-ui-server
-title: Relais de l'application ERIA
+title: Serveur UI
 description: Relais entre l'application ERIA et les services (lumières, volets, contextes…), et tunnel vers auth
 kind: service
 requires: []
