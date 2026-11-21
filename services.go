@@ -80,6 +80,7 @@ const genericCapability = "generic"
 type capability struct {
 	properties []string
 	actions    []string
+	events     []string
 	// needActions: recognised only if its actions are present too. Sensors'
 	// calibrate actions are optional (absent from the weather service).
 	needActions bool
@@ -101,6 +102,9 @@ var capabilities = func() map[string]capability {
 		}
 		for a := range m.Actions {
 			c.actions = append(c.actions, a)
+		}
+		for e := range m.Events {
+			c.events = append(c.events, e)
 		}
 		caps[name] = c
 	}
@@ -219,6 +223,13 @@ func buildServices(td TD, online bool) []Service {
 				used["a:"+name] = true
 			}
 		}
+		for _, name := range capabilities[capa].events {
+			if e, ok := td.Events[name]; ok {
+				e.Forms = nil
+				s.Events[name] = e
+				used["e:"+name] = true
+			}
+		}
 		services = append(services, s)
 	}
 	rest := newService(genericCapability)
@@ -233,10 +244,11 @@ func buildServices(td TD, online bool) []Service {
 			rest.Actions[name] = a
 		}
 	}
-	// ponytail: no capability declares events yet: all go to the generic service.
 	for name, e := range td.Events {
-		e.Forms = nil
-		rest.Events[name] = e
+		if !used["e:"+name] {
+			e.Forms = nil
+			rest.Events[name] = e
+		}
 	}
 	if len(rest.Properties)+len(rest.Actions)+len(rest.Events) > 0 {
 		services = append(services, rest)

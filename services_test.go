@@ -92,3 +92,29 @@ func TestChoicesRelayed(t *testing.T) {
 		t.Errorf("chosen = %s", b)
 	}
 }
+
+// A camera without @type (gateway-reolink): its images, snapshot and alarm make
+// one Camera service; the streams stay generic.
+func TestCameraService(t *testing.T) {
+	var td TD
+	raw := `{"id":"urn:cam","title":"Entrée",
+		"properties":{"latest":{"type":"string","contentMediaType":"image/jpeg"},"latestMain":{"type":"string"},"streams":{"type":"object"}},
+		"actions":{"snapshot":{}},"events":{"alarm":{"title":"Alarm"}}}`
+	if err := json.Unmarshal([]byte(raw), &td); err != nil {
+		t.Fatal(err)
+	}
+	services := buildServices(td, true)
+	if len(services) != 2 || services[0].Capability != "Camera" || services[1].Capability != genericCapability {
+		t.Fatalf("services = %+v", services)
+	}
+	cam := services[0]
+	if _, ok := cam.Events["alarm"]; !ok {
+		t.Error("alarm not in the Camera service")
+	}
+	if _, ok := cam.Actions["snapshot"]; !ok {
+		t.Error("snapshot not in the Camera service")
+	}
+	if _, ok := services[1].Properties["streams"]; !ok || len(services[1].Events) != 0 {
+		t.Errorf("generic = %+v", services[1])
+	}
+}
