@@ -298,7 +298,7 @@ func (s *session) pushResources() {
 		themes = append(themes, map[string]string{"id": id, "hash": themeHash(s.ch.themes, id)})
 	}
 	s.ch.hub.push(s.client, map[string]any{"push": "resources", "pages": pages, "themes": themes,
-		"homePage": s.ch.auth.HomePage(), "release": releasePush()})
+		"homePage": s.ch.auth.HomePage(), "terminalProfiles": s.ch.auth.TerminalProfiles(), "release": releasePush()})
 }
 
 // current returns the accepted claims and token, nil when the app holds
@@ -330,6 +330,10 @@ func (s *session) handle(req request) (any, *opError) {
 		return true, nil
 	case "token":
 		return s.setToken(req)
+	case "themes":
+		// Names and aspects only, as public as the resources: ERIA Admin reads
+		// them without a person's token (its terminal profiles).
+		return Themes(s.ch.themes), nil
 	}
 	c, token := s.current()
 	if c == nil {
@@ -412,7 +416,7 @@ func (s *session) handle(req request) (any, *opError) {
 		return p, invalid(err)
 	case "pages":
 		return s.ch.auth.Pages(), nil
-	case "savePage", "deletePage", "setHomePage":
+	case "savePage", "deletePage", "setHomePage", "saveTerminalProfile":
 		if s.ch.outer {
 			return nil, fail(failRefused, "the pages are written from inside the house only")
 		}
@@ -438,6 +442,19 @@ func (s *session) handle(req request) (any, *opError) {
 			return nil, s.authError(err)
 		}
 		return true, nil
+	case "saveTerminalProfile":
+		var in TerminalProfile
+		if json.Unmarshal(req.Value, &in) != nil {
+			return nil, fail(failInvalid, "bad terminal profile")
+		}
+		if in.ID == "" && in.Theme != "" && themeHash(s.ch.themes, in.Theme) == "" {
+			return nil, fail(failInvalid, "unknown or unreadable theme")
+		}
+		p, err := s.ch.auth.SaveTerminalProfile(token, in)
+		if err != nil {
+			return nil, s.authError(err)
+		}
+		return p, nil
 	case "setHomePage":
 		var id string
 		json.Unmarshal(req.Value, &id)
@@ -480,8 +497,6 @@ func (s *session) handle(req request) (any, *opError) {
 		return nil, fail(failRefused, "unknown op, or not allowed for this profile")
 	}
 	switch req.Op {
-	case "themes":
-		return Themes(s.ch.themes), nil
 	case "things":
 		return s.ch.registry.Things(), nil
 	case "td":

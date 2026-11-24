@@ -352,8 +352,8 @@ func TestChannel(t *testing.T) {
 	if r := b.call("page", map[string]any{"value": "p1"}); r["result"].(map[string]any)["title"] != "Entrée" {
 		t.Errorf("page = %v", r)
 	}
-	if r := b.call("themes", nil); errType(r) != failRefused {
-		t.Errorf("level 9 lists themes = %v, want refused", r)
+	if r := b.call("themes", nil); r["error"] != nil {
+		t.Errorf("without a token, themes = %v, want their names (ERIA Admin)", r)
 	}
 	if r := a.call("things", nil); r["error"] != nil {
 		t.Errorf("parent lists Things = %v", r)

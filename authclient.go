@@ -55,6 +55,8 @@ type Config struct {
 	Hidden    []string         `json:"hidden"`
 	Manual    []ManualThing    `json:"manual"`
 	Terminals []TerminalScreen `json:"terminals"`
+	// Terminal profiles, the default one first.
+	TerminalProfiles []TerminalProfile `json:"terminalProfiles"`
 }
 
 type ManualThing struct {
@@ -68,6 +70,9 @@ type TerminalScreen struct {
 	Screen         string `json:"screen"`
 	DetectedScreen string `json:"detectedScreen"`
 	HomePage       string `json:"homePage"`
+	// The profile given by the admin ("" = the default one), and the owner (a phone's person, 0: none).
+	TerminalProfile string `json:"terminalProfile"`
+	Owner           int64  `json:"owner"`
 }
 
 // NewAuthClient reaches auth at addr. roots holds the deployment root
@@ -306,20 +311,35 @@ func (a *AuthClient) Page(id string) (Page, error) {
 	return Page{}, errors.New("page not found")
 }
 
-// Manifest lists every page with its version, and the themes they use.
+// Manifest lists every page with its version, and the themes they and the profiles use.
 func (a *AuthClient) Manifest() (pages []PageRef, themes []string) {
 	pages, seen := []PageRef{}, map[string]bool{}
-	for _, p := range a.snapshot().Pages {
-		pages = append(pages, PageRef{p.ID, p.Version})
-		if p.Theme != "" && !seen[p.Theme] {
-			seen[p.Theme] = true
-			themes = append(themes, p.Theme)
+	use := func(theme string) {
+		if theme != "" && !seen[theme] {
+			seen[theme] = true
+			themes = append(themes, theme)
 		}
+	}
+	c := a.snapshot()
+	for _, p := range c.Pages {
+		pages = append(pages, PageRef{p.ID, p.Version})
+		use(p.Theme)
+	}
+	// A new profile's theme, before its first page.
+	for _, p := range c.TerminalProfiles {
+		use(p.Theme)
 	}
 	return pages, themes
 }
 
 func (a *AuthClient) HomePage() string { return a.snapshot().HomePage }
+
+func (a *AuthClient) TerminalProfiles() []TerminalProfile {
+	if p := a.snapshot().TerminalProfiles; p != nil {
+		return p
+	}
+	return []TerminalProfile{}
+}
 
 func (a *AuthClient) Contexts() []Context {
 	if c := a.snapshot().Contexts; c != nil {
@@ -384,6 +404,12 @@ func (a *AuthClient) SavePage(token string, p Page) (Page, error) {
 func (a *AuthClient) DeletePage(token, id string) error {
 	_, err := a.call(http.MethodDelete, "/v1/pages/"+id, token, nil, nil)
 	return err
+}
+
+func (a *AuthClient) SaveTerminalProfile(token string, p TerminalProfile) (TerminalProfile, error) {
+	var saved TerminalProfile
+	_, err := a.call(http.MethodPost, "/v1/terminal-profiles", token, p, &saved)
+	return saved, err
 }
 
 func (a *AuthClient) ReportScreen(token, screen string) error {

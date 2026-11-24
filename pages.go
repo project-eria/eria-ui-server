@@ -16,6 +16,19 @@ type Page struct {
 	Version  int             `json:"version"` // +1 at each save, checked against conflicts
 	Elements []Element       `json:"elements"`
 	Options  json.RawMessage `json:"options"` // {<theme>: {…}}
+	// The terminal profile it belongs to (eria-auth termprofiles.go); fixed at creation.
+	TerminalProfile string `json:"terminalProfile"`
+}
+
+// TerminalProfile is a set of pages with its start page, one theme and
+// aspect, for one format of screen; the admin gives terminals one (eria-auth).
+type TerminalProfile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Format   string `json:"format"`
+	Theme    string `json:"theme"`
+	Aspect   string `json:"aspect"`
+	HomePage string `json:"homePage"`
 }
 
 // Element is one function of a page; its fields depend on its type.
