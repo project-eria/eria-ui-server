@@ -367,6 +367,7 @@ func (s *session) handle(req request) (any, *opError) {
 		services := s.ch.registry.Services()
 		for i := range services {
 			services[i].Can = s.can(services[i])
+			services[i].Rooms = s.ch.auth.Table(services[i].Thing, false).Zones
 		}
 		return services, nil
 	case "contexts":

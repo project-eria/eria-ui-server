@@ -63,6 +63,9 @@ type Service struct {
 	Actions    map[string]Action   `json:"actions"`
 	Events     map[string]Event    `json:"events,omitempty"`
 	Can        *Can                `json:"can,omitempty"` // what the viewer may do, per connection
+	// Rooms of the Thing (its zones in the table signed by auth): the page
+	// editor lists the devices by room.
+	Rooms []string `json:"rooms,omitempty"`
 }
 
 // Can lists the operations a viewer may do on a service (PLAN §5.00): the
