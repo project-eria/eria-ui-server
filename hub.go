@@ -27,6 +27,9 @@ type Hub struct {
 	mu       sync.Mutex
 	feeds    map[feedKey]*feed
 	clients  map[*client]bool
+	// Set points of followed properties (setpoints.go), and how long each Thing's wait.
+	setpoints       map[feedKey]*setpoint
+	setpointTimeout func(thing string) time.Duration
 }
 
 const (
@@ -100,7 +103,8 @@ var (
 )
 
 func NewHub(registry *Registry) *Hub {
-	return &Hub{registry: registry, feeds: map[feedKey]*feed{}, clients: map[*client]bool{}}
+	return &Hub{registry: registry, feeds: map[feedKey]*feed{}, clients: map[*client]bool{},
+		setpoints: map[feedKey]*setpoint{}, setpointTimeout: func(string) time.Duration { return defaultSetpointTimeout }}
 }
 
 func (h *Hub) attach(terminal string) *client {
@@ -164,6 +168,19 @@ func (h *Hub) follow(c *client, k feedKey) *opError {
 	if f.value != nil && (c.allowed == nil || c.allowed(k)) {
 		h.pushLocked(c, pushMsg{Push: "value", Thing: k.Thing, Property: k.Name, Value: f.value})
 	}
+	if sp, ok := h.setpoints[k]; ok && (c.allowed == nil || c.allowed(k)) {
+		h.pushLocked(c, pushMsg{Push: "setpoint", Thing: k.Thing, Property: k.Name, Value: sp.value})
+	}
+	return nil
+}
+
+// value is the last known value of a followed property, nil when unknown.
+func (h *Hub) value(k feedKey) json.RawMessage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if f, ok := h.feeds[k]; ok {
+		return f.value
+	}
 	return nil
 }
 
@@ -206,6 +223,7 @@ func (h *Hub) unfollowLocked(c *client, k feedKey) {
 	if len(f.subs) == 0 {
 		f.cancel()
 		delete(h.feeds, k)
+		h.dropSetpointLocked(k) // nobody left to see it, nothing to tell when it is reached
 	}
 }
 
@@ -387,6 +405,9 @@ func (h *Hub) publish(k feedKey, value json.RawMessage) {
 		if c.allowed == nil || c.allowed(k) {
 			h.sendLocked(c, data)
 		}
+	}
+	if sp, ok := h.setpoints[k]; ok && k.Kind == kindProperty && reached(sp.value, value) {
+		h.clearSetpointLocked(k)
 	}
 }
 

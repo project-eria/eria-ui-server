@@ -57,6 +57,8 @@ type Config struct {
 	Terminals []TerminalScreen `json:"terminals"`
 	// Terminal profiles, the default one first.
 	TerminalProfiles []TerminalProfile `json:"terminalProfiles"`
+	// Set point delays chosen by the admin, in seconds, by Thing.
+	SetpointTimeouts map[string]int `json:"setpointTimeouts"`
 }
 
 type ManualThing struct {
@@ -333,6 +335,14 @@ func (a *AuthClient) Manifest() (pages []PageRef, themes []string) {
 }
 
 func (a *AuthClient) HomePage() string { return a.snapshot().HomePage }
+
+// SetpointTimeout is how long a set point of the Thing waits for the real state.
+func (a *AuthClient) SetpointTimeout(thing string) time.Duration {
+	if s := a.snapshot().SetpointTimeouts[thing]; s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	return defaultSetpointTimeout
+}
 
 func (a *AuthClient) TerminalProfiles() []TerminalProfile {
 	if p := a.snapshot().TerminalProfiles; p != nil {

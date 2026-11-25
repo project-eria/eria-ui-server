@@ -393,14 +393,27 @@ func (s *session) handle(req request) (any, *opError) {
 		if len(req.Value) == 0 {
 			return nil, fail(failInvalid, "no value")
 		}
-		return callThing(td, http.MethodPut, href(p.Forms, "writeproperty"), req.Value, token, req.Confirm)
+		out, err := callThing(td, http.MethodPut, href(p.Forms, "writeproperty"), req.Value, token, req.Confirm)
+		if err == nil { // accepted by the Thing: every app now sees the set point (setpoints.go)
+			s.ch.hub.setSetpoint(feedKey{req.Thing, kindProperty, req.Name}, req.Value)
+		}
+		return out, err
 	case "invoke":
 		td, ok := s.ch.registry.Thing(req.Thing)
 		a, exists := td.Actions[req.Name]
 		if !ok || !exists || !s.visible(req.Thing) {
 			return nil, fail(failInvalid, "unknown Thing or action")
 		}
-		return callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value, token, req.Confirm)
+		out, err := callThing(td, http.MethodPost, href(a.Forms, "invokeaction"), req.Value, token, req.Confirm)
+		if err == nil {
+			current := func(p string) json.RawMessage { return s.ch.hub.value(feedKey{req.Thing, kindProperty, p}) }
+			if p, v, clear, asks := setpointOf(req.Name, req.Value, current); asks && clear {
+				s.ch.hub.clearSetpoint(feedKey{req.Thing, kindProperty, p})
+			} else if asks {
+				s.ch.hub.setSetpoint(feedKey{req.Thing, kindProperty, p}, v)
+			}
+		}
+		return out, err
 
 	// --- Themes (signed: the app checks them, the relay only serves them) ---
 	case "theme":

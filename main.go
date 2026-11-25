@@ -113,6 +113,7 @@ func main() {
 
 	go registry.Poll(ctx, auth.ManualURLs)
 	hub := NewHub(registry)
+	hub.setpointTimeout = auth.SetpointTimeout
 	go auth.Run(ctx, func(old, new Config) {
 		if !slices.Equal(old.Hidden, new.Hidden) || !slices.Equal(old.Manual, new.Manual) {
 			registry.SetHide(new.Hidden)
