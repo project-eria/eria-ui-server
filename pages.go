@@ -29,6 +29,7 @@ type TerminalProfile struct {
 	Theme    string `json:"theme"`
 	Aspect   string `json:"aspect"`
 	HomePage string `json:"homePage"`
+	Role     string `json:"role"` // personal, room, shared, task (CONTEXT-PAGES-DESIGN §4.1)
 }
 
 // Element is one function of a page; its fields depend on its type.
