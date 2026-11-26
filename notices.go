@@ -31,6 +31,7 @@ func (h *Hub) watchNotices(ctx context.Context, thing string) {
 		var m pushMsg
 		if json.Unmarshal(msg, &m) == nil && m.Push == "value" {
 			h.broadcast("", map[string]string{"push": "notices-changed"})
+			h.noticesChanged(m.Value) // an alert is an incident (situation.go)
 		}
 	}
 }

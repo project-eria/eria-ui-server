@@ -38,6 +38,8 @@ var config = struct {
 	Health string `yaml:"health" default:"127.0.0.1:8099"`
 	// TD id of service-notices, whose notifications are given to the apps.
 	Notices string `yaml:"notices" default:"urn:eria:service:notices"`
+	// TD id of manager-contexts, whose active contexts choose the apps' pages.
+	Contexts string `yaml:"contexts" default:"urn:eria:manager:context"`
 	// Signed theme archives.
 	Themes string `yaml:"themes" default:"themes"`
 	// auth (AUTH-DESIGN §3.6): its tunnel listener, the house id, and the
@@ -126,6 +128,7 @@ func main() {
 	}, hub.revalidate)
 	go hub.WatchStatus(ctx)
 	go hub.watchNotices(ctx, config.Notices)
+	go hub.watchContexts(ctx, config.Contexts)
 	go announce(ctx, int(config.Port))
 
 	ch := &Channel{hub: hub, auth: auth, registry: registry, themes: config.Themes, noticesThing: config.Notices}

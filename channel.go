@@ -246,6 +246,7 @@ func (s *session) welcome() {
 	s.client.resources = s.pushResources
 	s.ch.hub.mu.Unlock()
 	s.pushResources()
+	s.ch.hub.push(s.client, s.ch.hub.situation.message()) // the page to show (situation.go)
 }
 
 // revalidate closes the connection whose token the new revocation list makes

@@ -12,6 +12,7 @@ keyset: auth-keyset.json # eria-coordinator auth-keyset
 themes: themes # signed theme archives: <id>.tar + <id>.tar.sig
 # TD id of service-notices, whose notifications go to the apps
 notices: urn:eria:service:notices
+contexts: urn:eria:manager:context # manager-contexts: its active contexts choose the pages shown
 # Inner eria-ui-server only (AUTH-DESIGN §2.3): the house's networks it takes
 # connections from — the main LAN and its local IPv6 prefix (ULA), never the
 # ISP's — a second check behind the firewall; none: every address, warned.

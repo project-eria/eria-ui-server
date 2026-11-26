@@ -30,6 +30,8 @@ type Hub struct {
 	// Set points of followed properties (setpoints.go), and how long each Thing's wait.
 	setpoints       map[feedKey]*setpoint
 	setpointTimeout func(thing string) time.Duration
+	// Active contexts and incident, for the apps' choice of page (situation.go).
+	situation situation
 }
 
 const (
