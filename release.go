@@ -40,6 +40,25 @@ var _release atomic.Pointer[Release]
 // apps within it.
 const releaseEvery = 10 * time.Minute
 
+// releaseNow asks followRelease to read the coordinator at once (an app's
+// « Rechercher une mise à jour »); the channel it sends is closed once read.
+var releaseNow = make(chan chan struct{})
+
+// checkRelease reads the coordinator now when followRelease runs (not on a
+// bench without coordinator), then gives what the apps get.
+func checkRelease() map[string]any {
+	done := make(chan struct{})
+	select {
+	case releaseNow <- done:
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+		}
+	case <-time.After(time.Second):
+	}
+	return releasePush()
+}
+
 // followRelease reads the coordinator's published version until ctx is done;
 // changed runs when it changes.
 func followRelease(ctx context.Context, coordinator string, roots []byte, changed func()) {
@@ -49,7 +68,7 @@ func followRelease(ctx context.Context, coordinator string, roots []byte, change
 	}
 	t := time.NewTicker(releaseEvery)
 	defer t.Stop()
-	for {
+	read := func() {
 		if token := serviceToken(""); token != "" {
 			if r, err := readRelease(ctx, client, coordinator, token); err != nil {
 				zlog.Warn().Err(err).Msg("[release] Can't read the app's release from the coordinator")
@@ -58,10 +77,17 @@ func followRelease(ctx context.Context, coordinator string, roots []byte, change
 				changed()
 			}
 		}
+	}
+	read()
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			read()
+		case done := <-releaseNow:
+			read()
+			close(done)
 		}
 	}
 }

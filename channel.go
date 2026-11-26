@@ -341,7 +341,7 @@ func (s *session) handle(req request) (any, *opError) {
 	}
 	// Rate limit per connection (G40): the requests that reach a Thing.
 	switch req.Op {
-	case "read", "write", "invoke", "observe", "subscribe":
+	case "read", "write", "invoke", "observe", "subscribe", "checkRelease":
 		if !s.rate.take() {
 			s.mu.Lock()
 			log := time.Since(s.rateLog) >= time.Minute
@@ -372,6 +372,9 @@ func (s *session) handle(req request) (any, *opError) {
 		return services, nil
 	case "contexts":
 		return s.ch.auth.Contexts(), nil
+	case "checkRelease":
+		// « Rechercher une mise à jour »: the coordinator read now, not in 10 min.
+		return checkRelease(), nil
 	case "levels":
 		return s.ch.auth.Levels(), nil
 	case "read":

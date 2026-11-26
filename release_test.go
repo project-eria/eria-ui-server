@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Step 5g-2: the updater's manifest and the package, from the coordinator's
@@ -55,4 +57,22 @@ func TestServeRelease(t *testing.T) {
 	if p := releasePush(); p["version"] != "1.2.0" {
 		t.Errorf("push = %v", p)
 	}
+}
+
+// « Rechercher une mise à jour »: the loop reads at once when asked; without it
+// (a bench without coordinator), what is known after a second.
+func TestCheckRelease(t *testing.T) {
+	defer _release.Store(nil)
+	_release.Store(&Release{Version: "0.5.0"})
+	assert.Equal(t, "0.5.0", checkRelease()["version"], "no loop: what is known")
+
+	read := 0
+	go func() {
+		done := <-releaseNow // what followRelease does
+		read++
+		_release.Store(&Release{Version: "0.6.0"})
+		close(done)
+	}()
+	assert.Equal(t, "0.6.0", checkRelease()["version"])
+	assert.Equal(t, 1, read)
 }
