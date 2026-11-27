@@ -291,8 +291,15 @@ func (s *session) readLoop(conn *websocket.Conn) {
 
 // pushResources sends the resource manifest (PLAN §5.000): every page with
 // its version, and the themes they use with their archive hash. The app
-// downloads what changed and keeps a local copy.
+// downloads what changed and keeps a local copy. The terminal goes first: the
+// admin may have changed its profile, start page or aspect.
 func (s *session) pushResources() {
+	s.mu.Lock()
+	c := s.claims
+	s.mu.Unlock()
+	if c != nil {
+		s.ch.hub.push(s.client, map[string]any{"push": "terminal", "terminal": s.ch.auth.Terminal(c.Term)})
+	}
 	pages, used := s.ch.auth.Manifest()
 	themes := []map[string]string{}
 	for _, id := range used {

@@ -75,6 +75,8 @@ type TerminalScreen struct {
 	// The profile given by the admin ("" = the default one), and the owner (a phone's person, 0: none).
 	TerminalProfile string `json:"terminalProfile"`
 	Owner           int64  `json:"owner"`
+	// The aspect the admin chose for it ("" = the pages' own).
+	Aspect string `json:"aspect"`
 }
 
 // NewAuthClient reaches auth at addr. roots holds the deployment root
